@@ -8,6 +8,8 @@ import { resolveOrgContext, requirePlatform, requireVerified, type OrgContext } 
 import type { Permission, PlatformPermission } from "../rbac/permissions";
 import { rateLimit, RULES } from "../rate-limit";
 
+const MAX_JSON_BYTES = 1024 * 1024;
+
 export type RequestMeta = { ip: string | null; userAgent: string | null; requestId: string };
 
 type AuthMode = "none" | "optional" | "session" | "verified" | "org";
@@ -99,9 +101,18 @@ export function route<B extends z.ZodTypeAny | undefined = undefined, Q extends 
       if (opts.body && !opts.rawBody) {
         const ct = req.headers.get("content-type") ?? "";
         if (!ct.includes("application/json")) throw new AppError("BAD_REQUEST", "Expected application/json");
-        const json = await req.json().catch(() => {
+        // JSON bodies are small forms; cap them before parsing/validation so an
+        // oversized payload cannot exhaust memory (uploads use multipart routes).
+        const declared = Number(req.headers.get("content-length") ?? 0);
+        if (declared > MAX_JSON_BYTES) throw new AppError("PAYLOAD_TOO_LARGE", "Request body is too large");
+        const text = await req.text();
+        if (Buffer.byteLength(text) > MAX_JSON_BYTES) throw new AppError("PAYLOAD_TOO_LARGE", "Request body is too large");
+        let json: unknown;
+        try {
+          json = JSON.parse(text);
+        } catch {
           throw new AppError("BAD_REQUEST", "Malformed JSON body");
-        });
+        }
         body = opts.body.parse(json);
       }
       let query: unknown = undefined;

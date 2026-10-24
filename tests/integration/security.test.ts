@@ -249,6 +249,13 @@ describe("Security: CSRF, sessions, privilege escalation, uploads, leakage", () 
     expect(r.json.error?.message).toMatch(/Unsupported|unrecognised/);
   });
 
+  it("rejects oversized JSON bodies before validation", async () => {
+    const tok = await tokenFor(org.owner.id);
+    const r = await call(jobsRoute.POST as Handler, { method: "POST", token: tok, org: org.org.slug, body: { title: "x", description: "a".repeat(1024 * 1024 + 10) } });
+    expect(r.status).toBe(413);
+    expect(r.json.error?.code).toBe("PAYLOAD_TOO_LARGE");
+  });
+
   it("validation errors are structured and contain no stack traces", async () => {
     const tok = await tokenFor(org.owner.id);
     const r = await call(jobsRoute.POST as Handler, { method: "POST", token: tok, org: org.org.slug, body: { title: "" } });

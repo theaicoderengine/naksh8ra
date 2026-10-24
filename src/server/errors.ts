@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 
 export type ErrorCode =
   | "BAD_REQUEST"
+  | "PAYLOAD_TOO_LARGE"
   | "VALIDATION_FAILED"
   | "UNAUTHENTICATED"
   | "MFA_REQUIRED"
@@ -19,6 +20,7 @@ export type ErrorCode =
 
 const STATUS: Record<ErrorCode, number> = {
   BAD_REQUEST: 400,
+  PAYLOAD_TOO_LARGE: 413,
   VALIDATION_FAILED: 422,
   UNAUTHENTICATED: 401,
   MFA_REQUIRED: 401,
