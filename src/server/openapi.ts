@@ -35,6 +35,7 @@ export const ENDPOINTS: Ep[] = [
   E("post", "/auth/mfa/enable", "Auth", "Confirm TOTP setup", "session", { body: z.object({ code: z.string() }) }),
   E("post", "/auth/mfa/verify", "Auth", "Complete MFA for the current session", "session", { body: z.object({ code: z.string() }) }),
   E("post", "/auth/mfa/disable", "Auth", "Disable MFA", "session", { body: z.object({ password: z.string(), code: z.string() }) }),
+  E("patch", "/auth/profile", "Auth", "Update my name, phone, locale and time zone", "session", { body: z.object({ firstName: z.string().optional(), lastName: z.string().optional(), phone: z.string().nullable().optional(), locale: z.string().optional(), timezone: z.string().optional() }) }),
   E("get", "/auth/sessions", "Auth", "List active sessions", "session"),
   E("delete", "/auth/sessions/{id}", "Auth", "Revoke a session", "session"),
   E("post", "/auth/active-organisation", "Auth", "Switch active organisation (membership verified server-side)", "verified", { body: z.object({ organisation: z.string() }) }),

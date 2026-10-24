@@ -37,12 +37,13 @@
     "clsx": "^2.1.1",
     "ioredis": "^5.11.1",
     "lucide-react": "^0.540.0",
-    "mammoth": "^1.10.0",
+    "mammoth": "^1.13.0",
     "next": "^15.5.28",
-    "nodemailer": "^7.0.13",
+    "nodemailer": "^10.2.1",
     "openai": "^5.23.2",
     "pdf-parse": "^1.1.1",
     "pino": "^9.14.0",
+    "qrcode": "^1.5.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-hook-form": "^7.62.0",
@@ -51,7 +52,7 @@
     "stripe": "^18.5.0",
     "tailwind-merge": "^3.7.0",
     "zod": "^3.25.76",
-    "zod-to-json-schema": "^3.24.6"
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.7",
@@ -59,6 +60,7 @@
     "@types/node": "^22.20.5",
     "@types/nodemailer": "^8.0.2",
     "@types/pdf-parse": "^1.1.5",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.6.1",

@@ -20,7 +20,10 @@ export const RULES = {
 
 /** Returns remaining requests, or throws RATE_LIMITED. Uses Redis when configured, else Postgres. */
 export async function rateLimit(name: keyof typeof RULES, subject: string) {
-  const rule = RULES[name];
+  const base = RULES[name];
+  // Test/load environments may scale limits up; production keeps the defaults (multiplier 1).
+  const mult = process.env.APP_ENV === "production" ? 1 : Math.max(1, Number(process.env.RATE_LIMIT_MULTIPLIER ?? 1));
+  const rule = { ...base, limit: base.limit * mult };
   const key = `rl:${name}:${subject}`;
   const redis = getRedis();
   let count: number;
