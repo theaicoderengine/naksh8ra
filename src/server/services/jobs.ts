@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
-import { withOrg, withUser, type Tx } from "../db/tenant";
+import { withOrg, withUser, withSystem, type Tx } from "../db/tenant";
 import { prisma } from "../db/client";
 import { AppError, forbidden, invalidState, notFound } from "../errors";
 import { audit } from "../audit";
@@ -15,8 +15,7 @@ import type { RequestMeta } from "../http/route";
 const str = (max: number) => z.string().trim().max(max);
 const list = z.array(z.string().trim().min(1).max(200)).max(50).default([]);
 
-export const jobInputSchema = z
-  .object({
+export const jobBaseSchema = z.object({
     title: str(160).min(2),
     departmentId: z.string().nullable().optional(),
     description: str(20000).min(20, "Add a description of at least 20 characters"),
@@ -45,11 +44,18 @@ export const jobInputSchema = z
     interviewTemplateId: z.string().nullable().optional(),
     competencyIds: z.array(z.string()).max(20).optional(),
     aiDraftUsed: z.boolean().default(false),
-  })
+  });
+
+export const jobInputSchema = jobBaseSchema
   .refine((j) => j.salaryMin == null || j.salaryMax == null || j.salaryMin <= j.salaryMax, { message: "Minimum salary must not exceed maximum", path: ["salaryMin"] })
   .refine((j) => j.experienceMin == null || j.experienceMax == null || j.experienceMin <= j.experienceMax, { message: "Minimum experience must not exceed maximum", path: ["experienceMin"] });
 
 export type JobInput = z.infer<typeof jobInputSchema>;
+
+/** Partial update: same field rules; defaults are not applied so omitted fields stay unchanged. */
+export const jobPatchSchema = z
+  .object(Object.fromEntries(Object.entries(jobBaseSchema.shape).map(([k, v]) => [k, (v instanceof z.ZodDefault ? v._def.innerType : v).optional()])) as { [K in keyof typeof jobBaseSchema.shape]: z.ZodOptional<z.ZodTypeAny> })
+  .refine((j) => j.salaryMin == null || j.salaryMax == null || (j.salaryMin as number) <= (j.salaryMax as number), { message: "Minimum salary must not exceed maximum", path: ["salaryMin"] });
 
 async function validateRefs(tx: Tx, orgId: string, input: Partial<JobInput>) {
   if (input.departmentId) {
@@ -306,11 +312,16 @@ export function eligibilityFor(job: Pick<PublicJob, "eligibleGraduationYears" | 
 export async function studentEligibilityProfile(userId: string): Promise<StudentEligibility | null> {
   const sp = await prisma.studentProfile.findUnique({ where: { userId }, include: { education: true } });
   if (!sp) return null;
-  const memberships = await withUser(userId, (tx) => tx.cohortMembership.findMany({ where: { userId, status: "ACTIVE" }, select: { cohort: { select: { programmeId: true } } } }));
+  // Own membership rows are visible via the cohort_member_self policy; the cohort itself is
+  // university-owned, so its programme id is resolved narrowly from those ids only.
+  const memberships = await withUser(userId, (tx) => tx.cohortMembership.findMany({ where: { userId, status: "ACTIVE" }, select: { cohortId: true } }));
+  const cohorts = memberships.length
+    ? await withSystem("student eligibility: programme ids of own cohorts", (tx) => tx.studentCohort.findMany({ where: { id: { in: memberships.map((m) => m.cohortId) } }, select: { programmeId: true } }))
+    : [];
   return {
     graduationYear: sp.graduationYear ?? sp.education.find((e) => e.graduationYear)?.graduationYear ?? null,
     degrees: [sp.currentDegree, ...sp.education.map((e) => e.degree)].filter(Boolean) as string[],
-    programmeIds: memberships.map((m) => m.cohort.programmeId).filter(Boolean) as string[],
+    programmeIds: cohorts.map((c) => c.programmeId).filter(Boolean) as string[],
   };
 }
 

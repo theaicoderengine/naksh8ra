@@ -158,6 +158,7 @@ export function assignableRoles(actorRole: string, orgType: string): OrgRoleKey[
   const all = (Object.keys(ORG_ROLES) as OrgRoleKey[]).filter((k) => (ORG_ROLES[k].types as string[]).includes(orgType));
   if (actorRole === "OWNER") return all;
   const actor = permissionsFor(actorRole);
+  if (!actor.has("members.invite") && !actor.has("members.manage")) return [];
   // A non-owner may only assign roles whose permissions are a subset of their own.
   return all.filter((k) => k !== "OWNER" && [...ORG_ROLES[k].permissions].every((p) => actor.has(p)));
 }

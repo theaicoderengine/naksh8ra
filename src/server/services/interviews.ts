@@ -320,7 +320,11 @@ export async function getCandidateState(a: InterviewAccess) {
       startedAt: s.startedAt,
       progress: { answered: s.mode === "STRUCTURED_AUDIO" ? Math.min(s.currentIndex, p.length) : answers.filter((x) => !x.isFollowUp).length, total: c.questionCount },
       currentQuestion: current ? { position: current.position, prompt: current.prompt, answerSeconds: Math.round(current.answerSeconds * c.accessibility.extendedTimeMultiplier) } : null,
-      conversation: s.mode === "REALTIME_CONVERSATIONAL" && c.accessibility.captions ? (s.conversation as Turn[]).map((t) => ({ role: t.role, text: t.text })) : [],
+      // Live captions while the interview runs; afterwards only if the employer chose to share transcripts.
+      conversation:
+        s.mode === "REALTIME_CONVERSATIONAL" && ((c.accessibility.captions && ["IN_PROGRESS", "INTERRUPTED"].includes(s.status)) || (c.showTranscriptToCandidate && candidateStatus(s.status) === "COMPLETED"))
+          ? (s.conversation as Turn[]).map((t) => ({ role: t.role, text: t.text }))
+          : [],
       consents: Object.fromEntries(consents.map((x) => [x.type, x.granted])),
       noticeVersion: PRIVACY_NOTICE_VERSION,
       ttsMode: ttsProvider().name === "browser" ? "browser" : "server",

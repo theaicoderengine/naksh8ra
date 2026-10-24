@@ -88,7 +88,8 @@ export async function organisationDetail(id: string, admin: SessionInfo, meta: R
 
 export const orgActionSchema = z.object({ action: z.enum(["suspend", "reactivate", "verify", "reject_verification", "close"]), reason, confirm: z.literal(true) });
 
-export async function organisationAction(id: string, input: z.infer<typeof orgActionSchema>, admin: SessionInfo, meta: RequestMeta) {
+export async function organisationAction(id: string, raw: z.infer<typeof orgActionSchema>, admin: SessionInfo, meta: RequestMeta) {
+  const input = orgActionSchema.parse(raw); // services validate too (defense in depth)
   const org = await prisma.organisation.findUnique({ where: { id } });
   if (!org) throw notFound("Organisation");
   const data =
@@ -110,7 +111,8 @@ export async function organisationAction(id: string, input: z.infer<typeof orgAc
 
 export const creditAdjustSchema = z.object({ delta: z.number().int().min(-100000).max(100000).refine((n) => n !== 0, "Must be non-zero"), reason, confirm: z.literal(true), idempotencyKey: z.string().min(8).max(100) });
 
-export async function adjustOrgCredits(orgId: string, input: z.infer<typeof creditAdjustSchema>, admin: SessionInfo, meta: RequestMeta) {
+export async function adjustOrgCredits(orgId: string, raw: z.infer<typeof creditAdjustSchema>, admin: SessionInfo, meta: RequestMeta) {
+  const input = creditAdjustSchema.parse(raw);
   if (!(await prisma.organisation.findUnique({ where: { id: orgId } }))) throw notFound("Organisation");
   const res = await prisma.$transaction((tx) => adjust(tx, { organisationId: orgId }, input.delta, `admin:${input.idempotencyKey}`, input.reason, admin.user.id));
   await audit({ organisationId: orgId, actorUserId: admin.user.id, actorType: "PLATFORM_ADMIN", action: "platform.credits_adjusted", targetType: "CreditAccount", targetId: res.entry.accountId, reason: input.reason, ip: meta.ip, metadata: { delta: input.delta, duplicate: res.duplicate } });

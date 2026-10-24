@@ -9,5 +9,6 @@ export default async function setup() {
   const prisma = new PrismaClient({ datasources: { db: { url: owner } } });
   const { seedSystem } = await import("../../src/server/seed/system");
   await seedSystem(prisma);
+  await prisma.rateLimitBucket.deleteMany();
   await prisma.$disconnect();
 }

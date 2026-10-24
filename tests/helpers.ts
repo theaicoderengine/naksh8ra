@@ -56,3 +56,13 @@ export async function addMember(orgId: string, roleKey: string) {
 export async function orgCtx(userId: string, orgId: string): Promise<OrgContext> {
   return resolveOrgContext(await sessionFor(userId), orgId);
 }
+
+/** Read a link token from the dev mailbox (console email provider stores bodies). */
+export async function tokenFromEmail(to: string, re: RegExp) {
+  const mails = await prisma.emailDelivery.findMany({ where: { toAddress: to.toLowerCase() }, orderBy: { createdAt: "desc" } });
+  for (const d of mails) {
+    const m = d.bodyText?.match(re);
+    if (m) return m[1];
+  }
+  throw new Error(`no matching email to ${to}`);
+}

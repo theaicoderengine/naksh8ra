@@ -74,6 +74,8 @@ export const templates = {
     make("Security alert for your account", "Security alert", [`Hi ${p.name},`, `${p.event} (${p.when}).`, "If this wasn't you, reset your password immediately and contact support."], { label: "Review security settings", url: p.url }),
   cohortInvitation: (p: { university: string; cohort: string; url: string }) =>
     make(`${p.university} invited you to ${p.cohort}`, "Join your placement cohort", [`${p.university} invited you to join the ${p.cohort} placement cohort. If you accept, the placement team can see your profile summary and application progress — never employer assessments or interview recordings.`], { label: "Review invitation", url: p.url }),
+  contactEnquiry: (p: { name: string; email: string; company?: string; topic: string; message: string }) =>
+    make(`[${p.topic}] Website enquiry from ${p.name}`, "New website enquiry", [`From: ${p.name} <${p.email}>`, `Company: ${p.company ?? "—"}`, `Topic: ${p.topic}`, p.message]),
   dataExportReady: (p: { url: string }) =>
     make("Your data export is ready", "Your data export is ready", ["The export you requested is ready to download. The download link requires you to be signed in and expires in 7 days."], { label: "Download", url: p.url }),
 };
