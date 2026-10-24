@@ -1,0 +1,1870 @@
+// Atlas Hiring — database schema
+//
+// Conventions
+// - Every tenant-owned table carries `organisationId` and is protected by
+//   PostgreSQL row-level security (see migrations/*_rls). The application role
+//   (`atlas_app`) is NOT the table owner, so RLS is enforced for every query.
+// - Personal (student/candidate) data is owned by a User, never by a university.
+// - Ledgers (credit ledger, audit events, stage history, session events) are
+//   append-only; UPDATE/DELETE are blocked by triggers.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = []
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("MIGRATION_DATABASE_URL")
+}
+
+// ───────────────────────────── ENUMS ─────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum PlatformRole {
+  NONE
+  SUPPORT
+  BILLING_ADMIN
+  SUPER_ADMIN
+}
+
+enum OrganisationType {
+  EMPLOYER
+  UNIVERSITY
+}
+
+enum OrganisationStatus {
+  PENDING_VERIFICATION
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum MembershipStatus {
+  ACTIVE
+  INVITED
+  REMOVED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum TokenPurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  MFA_CHALLENGE
+}
+
+enum JobStatus {
+  DRAFT
+  PUBLISHED
+  PAUSED
+  CLOSED
+  ARCHIVED
+}
+
+enum JobVisibility {
+  PUBLIC
+  CAMPUS
+  INTERNAL
+  INVITE_ONLY
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACT
+  INTERNSHIP
+  TEMPORARY
+  GRADUATE_PROGRAMME
+}
+
+enum RemotePolicy {
+  ONSITE
+  HYBRID
+  REMOTE
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  IN_REVIEW
+  INTERVIEWING
+  OFFER
+  HIRED
+  REJECTED
+  WITHDRAWN
+}
+
+enum StageKind {
+  NEW
+  REVIEW
+  SCREENING
+  AI_INTERVIEW_INVITED
+  AI_INTERVIEW_COMPLETED
+  HUMAN_INTERVIEW
+  FINAL_REVIEW
+  OFFER
+  HIRED
+  REJECTED
+  WITHDRAWN
+}
+
+enum DocumentKind {
+  RESUME
+  COVER_LETTER
+  PORTFOLIO
+  OTHER
+}
+
+enum ScanStatus {
+  PENDING
+  CLEAN
+  INFECTED
+  NOT_SCANNED
+  FAILED
+}
+
+enum ParseStatus {
+  PENDING
+  PARSED
+  NEEDS_REVIEW
+  FAILED
+}
+
+enum InterviewMode {
+  REALTIME_CONVERSATIONAL
+  STRUCTURED_AUDIO
+}
+
+enum QuestionSelection {
+  FIXED
+  ADAPTIVE
+}
+
+enum InterviewSessionStatus {
+  CREATED
+  INVITED
+  READY
+  IN_PROGRESS
+  INTERRUPTED
+  PROCESSING
+  ASSESSED
+  REQUIRES_REVIEW
+  REVIEWED
+  CLOSED
+  EXPIRED
+  CANCELLED
+  FAILED
+}
+
+enum ProviderMode {
+  LIVE
+  FIXTURE
+}
+
+enum AssessmentStatus {
+  PENDING
+  COMPLETED
+  REQUIRES_REVIEW
+  FAILED
+}
+
+enum CompetencyRating {
+  INSUFFICIENT_EVIDENCE
+  R1
+  R2
+  R3
+  R4
+  R5
+}
+
+enum ReviewDecision {
+  CONFIRMED
+  ADJUSTED
+  REJECTED_AI_OUTPUT
+}
+
+enum ConsentType {
+  PRIVACY_NOTICE
+  TERMS
+  INTERVIEW_RECORDING
+  AI_ASSESSMENT
+  TRANSCRIPT_PROCESSING
+  PRACTICE_SHARING
+  MARKETING
+  COHORT_DATA_SHARING
+}
+
+enum PlanInterval {
+  MONTH
+  YEAR
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+  UNPAID
+}
+
+enum CreditAccountOwner {
+  ORGANISATION
+  USER
+}
+
+enum CreditEntryType {
+  GRANT_SUBSCRIPTION
+  GRANT_PURCHASE
+  GRANT_FREE_PRACTICE
+  RESERVE
+  RELEASE
+  CONSUME
+  REFUND
+  ADJUSTMENT
+  EXPIRE
+}
+
+enum CheckoutKind {
+  SUBSCRIPTION
+  CREDIT_PACK
+}
+
+enum CheckoutStatus {
+  OPEN
+  COMPLETED
+  EXPIRED
+}
+
+enum PaymentEventStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  UNCOLLECTIBLE
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  BOUNCED
+  FAILED
+  SUPPRESSED
+}
+
+enum TicketStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum DsrType {
+  EXPORT
+  DELETION
+  CORRECTION
+}
+
+enum DsrStatus {
+  RECEIVED
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+}
+
+enum DeletionJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum PracticeStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+  FAILED
+}
+
+enum FeedbackDisclosureStatus {
+  DRAFT
+  APPROVED
+  RETRACTED
+}
+
+enum SupportAccessStatus {
+  REQUESTED
+  APPROVED
+  DENIED
+  EXPIRED
+  REVOKED
+}
+
+enum AccommodationStatus {
+  REQUESTED
+  ACKNOWLEDGED
+  GRANTED
+  DECLINED
+}
+
+// ───────────────────────── IDENTITY & ACCESS ─────────────────────────
+
+model User {
+  id              String       @id @default(cuid())
+  email           String       @unique // stored lower-cased
+  emailVerifiedAt DateTime?
+  passwordHash    String?
+  status          UserStatus   @default(ACTIVE)
+  platformRole    PlatformRole @default(NONE)
+  locale          String       @default("en")
+  timezone        String       @default("UTC")
+  signupIntent    String? // EMPLOYER | STUDENT | UNIVERSITY | CANDIDATE — drives onboarding
+  mfaSecret       String? // AES-GCM encrypted TOTP secret
+  mfaEnabledAt    DateTime?
+  failedLogins    Int          @default(0)
+  lockedUntil     DateTime?
+  lastLoginAt     DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  profile           UserProfile?
+  sessions          Session[]
+  tokens            AuthToken[]
+  memberships       OrganisationMembership[]
+  studentProfile    StudentProfile?
+  candidates        Candidate[]
+  notifications     Notification[]
+  consents          ConsentRecord[]
+  savedJobs         SavedJob[]
+  practiceSessions  PracticeInterview[]
+  dataRequests      DataSubjectRequest[]
+  notificationPrefs NotificationPreference[]
+  cohortMemberships CohortMembership[]
+}
+
+model UserProfile {
+  userId      String   @id
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName   String
+  lastName    String
+  displayName String?
+  phone       String?
+  country     String?
+  city        String?
+  avatarKey   String?
+  updatedAt   DateTime @updatedAt
+}
+
+model Session {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash     String    @unique
+  activeOrgId   String?
+  mfaVerified   Boolean   @default(false)
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  revokedReason String?
+
+  @@index([userId])
+}
+
+model AuthToken {
+  id         String       @id @default(cuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purpose    TokenPurpose
+  tokenHash  String       @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime     @default(now())
+
+  @@index([userId, purpose])
+}
+
+// Roles are system-defined and versioned in code (src/server/rbac/permissions.ts);
+// the tables below let organisations see and (for custom roles) extend them.
+model Role {
+  id             String   @id @default(cuid())
+  key            String // e.g. OWNER, HR_ADMIN, RECRUITER, HIRING_MANAGER, PLACEMENT_ADMIN, PLACEMENT_OFFICER
+  name           String
+  description    String?
+  organisationId String? // null = system role
+  isSystem       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  permissions RolePermission[]
+  memberships OrganisationMembership[]
+
+  @@unique([organisationId, key])
+}
+
+model Permission {
+  id          String           @id @default(cuid())
+  key         String           @unique // e.g. jobs.publish
+  description String
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model Organisation {
+  id                 String             @id @default(cuid())
+  slug               String             @unique
+  name               String
+  legalName          String?
+  type               OrganisationType   @default(EMPLOYER)
+  status             OrganisationStatus @default(ACTIVE)
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  verificationNotes  String?
+  website            String?
+  industry           String?
+  sizeBand           String?
+  country            String?
+  timezone           String             @default("UTC")
+  defaultLocale      String             @default("en")
+  dataRegion         String             @default("default")
+  logoKey            String?
+  brandColor         String?
+  description        String?
+  billingEmail       String?
+  stripeCustomerId   String?            @unique
+  termsAcceptedAt    DateTime?
+  termsVersion       String?
+  settings           Json               @default("{}")
+  suspendedAt        DateTime?
+  suspendedReason    String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  memberships         OrganisationMembership[]
+  invitations         Invitation[]
+  departments         Department[]
+  jobs                Job[]
+  candidates          Candidate[]
+  applications        Application[]
+  stages              ApplicationStage[]
+  templates           InterviewTemplate[]
+  competencies        Competency[]
+  interviewSessions   InterviewSession[]
+  subscriptions       Subscription[]
+  universityProfile   UniversityProfile?
+  placementProgrammes PlacementProgramme[]
+  cohorts             StudentCohort[]
+  integrations        IntegrationConnection[]
+  retentionPolicies   RetentionPolicy[]
+  supportTickets      SupportTicket[]
+  supportGrants       SupportAccessGrant[]
+}
+
+model OrganisationMembership {
+  id             String           @id @default(cuid())
+  organisationId String
+  userId         String
+  roleId         String
+  status         MembershipStatus @default(ACTIVE)
+  title          String?
+  departmentId   String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         Role         @relation(fields: [roleId], references: [id])
+
+  @@unique([organisationId, userId])
+  @@index([userId])
+}
+
+model Invitation {
+  id             String           @id @default(cuid())
+  organisationId String
+  email          String
+  roleKey        String
+  tokenHash      String           @unique
+  status         InvitationStatus @default(PENDING)
+  invitedById    String
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  acceptedById   String?
+  createdAt      DateTime         @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId, email])
+}
+
+model AuditEvent {
+  id             String   @id @default(cuid())
+  organisationId String?
+  actorUserId    String?
+  actorType      String   @default("USER") // USER | SYSTEM | PLATFORM_ADMIN | WEBHOOK
+  action         String // e.g. job.published
+  targetType     String?
+  targetId       String?
+  reason         String?
+  result         String   @default("SUCCESS")
+  ipAddress      String?
+  userAgent      String?
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+
+  @@index([organisationId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action])
+}
+
+// Controlled, time-boxed support access to a tenant. Requires an approval from
+// an organisation owner (or a super-admin break-glass with reason) and is audited.
+model SupportAccessGrant {
+  id             String              @id @default(cuid())
+  organisationId String
+  requestedById  String
+  approvedById   String?
+  reason         String
+  scope          String              @default("METADATA") // METADATA only — never recordings/transcripts
+  status         SupportAccessStatus @default(REQUESTED)
+  expiresAt      DateTime?
+  createdAt      DateTime            @default(now())
+  decidedAt      DateTime?
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@index([organisationId, status])
+}
+
+// ───────────────────────────── RECRUITMENT ─────────────────────────────
+
+model Department {
+  id             String   @id @default(cuid())
+  organisationId String
+  name           String
+  createdAt      DateTime @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  jobs         Job[]
+
+  @@unique([organisationId, name])
+  @@unique([id, organisationId])
+}
+
+model Job {
+  id                      String         @id @default(cuid())
+  organisationId          String
+  departmentId            String?
+  title                   String
+  slug                    String
+  description             String
+  responsibilities        String?
+  requiredQualifications  String[]
+  preferredSkills         String[]
+  requiredSkills          String[]
+  location                String?
+  country                 String?
+  remotePolicy            RemotePolicy   @default(ONSITE)
+  employmentType          EmploymentType @default(FULL_TIME)
+  experienceMin           Int?
+  experienceMax           Int?
+  salaryMin               Int?
+  salaryMax               Int?
+  salaryCurrency          String?
+  salaryPeriod            String? // YEAR | MONTH | HOUR
+  openings                Int            @default(1)
+  applicationDeadline     DateTime?
+  status                  JobStatus      @default(DRAFT)
+  visibility              JobVisibility  @default(PUBLIC)
+  campusHiring            Boolean        @default(false)
+  eligibleGraduationYears Int[]
+  eligibleDegrees         String[]
+  eligibleProgrammeIds    String[]
+  screeningQuestions      Json           @default("[]")
+  interviewTemplateId     String?
+  aiDraftUsed             Boolean        @default(false)
+  aiDraftReviewedById     String?
+  publishedAt             DateTime?
+  closedAt                DateTime?
+  createdById             String
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+
+  organisation      Organisation       @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  department        Department?        @relation(fields: [departmentId, organisationId], references: [id, organisationId])
+  interviewTemplate InterviewTemplate? @relation(fields: [interviewTemplateId, organisationId], references: [id, organisationId])
+  assignments       JobAssignment[]
+  applications      Application[]
+  competencies      JobCompetency[]
+  savedBy           SavedJob[]
+
+  @@unique([organisationId, slug])
+  @@unique([id, organisationId])
+  @@index([status, visibility])
+}
+
+model JobAssignment {
+  id             String   @id @default(cuid())
+  organisationId String
+  jobId          String
+  userId         String
+  role           String   @default("RECRUITER") // RECRUITER | HIRING_MANAGER | REVIEWER
+  createdAt      DateTime @default(now())
+
+  job Job @relation(fields: [jobId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@unique([jobId, userId, role])
+  @@index([organisationId, userId])
+}
+
+model JobCompetency {
+  id             String @id @default(cuid())
+  organisationId String
+  jobId          String
+  competencyId   String
+  weight         Int    @default(1)
+
+  job        Job        @relation(fields: [jobId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  competency Competency @relation(fields: [competencyId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@unique([jobId, competencyId])
+}
+
+// A candidate is an organisation-scoped view of a person. If the person has a
+// platform account (student or applicant), `userId` links it: one Candidate per
+// (organisation, user) — no duplicate identities, no duplicate charges.
+model Candidate {
+  id             String   @id @default(cuid())
+  organisationId String
+  userId         String?
+  email          String
+  firstName      String
+  lastName       String
+  phone          String?
+  location       String?
+  headline       String?
+  source         String   @default("DIRECT") // DIRECT | STUDENT_PORTAL | INVITED | IMPORT
+  tags           String[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organisation Organisation        @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user         User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  applications Application[]
+  documents    CandidateDocument[]
+  notes        CandidateNote[]
+
+  @@unique([organisationId, email])
+  @@unique([organisationId, userId])
+  @@unique([id, organisationId])
+}
+
+model ApplicationStage {
+  id             String    @id @default(cuid())
+  organisationId String
+  key            String
+  name           String
+  kind           StageKind
+  position       Int
+  isTerminal     Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  organisation Organisation  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  applications Application[]
+
+  @@unique([organisationId, key])
+  @@unique([id, organisationId])
+}
+
+model Application {
+  id                   String            @id @default(cuid())
+  organisationId       String
+  jobId                String
+  candidateId          String
+  candidateUserId      String? // denormalised for RLS: lets the applicant read their own application
+  stageId              String?
+  status               ApplicationStatus @default(SUBMITTED)
+  resumeVersionId      String?
+  coverLetter          String?
+  screeningAnswers     Json              @default("[]")
+  sharedProfile        Json? // exact snapshot the applicant previewed & consented to share
+  source               String            @default("DIRECT")
+  placementProgrammeId String?
+  assignedToId         String?
+  submittedAt          DateTime?
+  withdrawnAt          DateTime?
+  withdrawReason       String?
+  decidedAt            DateTime?
+  decisionReason       String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  organisation Organisation                  @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  job          Job                           @relation(fields: [jobId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  candidate    Candidate                     @relation(fields: [candidateId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  stage        ApplicationStage?             @relation(fields: [stageId, organisationId], references: [id, organisationId])
+  history      ApplicationStageHistory[]
+  invitations  InterviewInvitation[]
+  sessions     InterviewSession[]
+  notes        CandidateNote[]
+  feedback     ReviewerFeedback[]
+  disclosures  CandidateFeedbackDisclosure[]
+
+  @@unique([jobId, candidateId])
+  @@unique([id, organisationId])
+  @@index([organisationId, status])
+  @@index([candidateUserId])
+}
+
+model ApplicationStageHistory {
+  id                 String             @id @default(cuid())
+  organisationId     String
+  applicationId      String
+  fromStageId        String?
+  toStageId          String?
+  fromStatus         ApplicationStatus?
+  toStatus           ApplicationStatus
+  actorUserId        String?
+  reason             String?
+  visibleToCandidate Boolean            @default(false)
+  createdAt          DateTime           @default(now())
+
+  application Application @relation(fields: [applicationId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
+}
+
+model CandidateNote {
+  id             String   @id @default(cuid())
+  organisationId String
+  candidateId    String
+  applicationId  String?
+  authorId       String
+  body           String
+  createdAt      DateTime @default(now())
+
+  candidate   Candidate    @relation(fields: [candidateId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  application Application? @relation(fields: [applicationId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@index([candidateId])
+}
+
+// Stored files. Owner is either an organisation (tenant) or a user (personal).
+model StoredFile {
+  id             String     @id @default(cuid())
+  organisationId String?
+  ownerUserId    String?
+  storageKey     String     @unique
+  fileName       String
+  mimeType       String
+  sizeBytes      Int
+  sha256         String
+  scanStatus     ScanStatus @default(PENDING)
+  scanDetail     String?
+  purpose        String // RESUME | AUDIO | EXPORT | LOGO | DOCUMENT
+  createdAt      DateTime   @default(now())
+  deletedAt      DateTime?
+
+  @@index([organisationId])
+  @@index([ownerUserId])
+}
+
+model CandidateDocument {
+  id             String       @id @default(cuid())
+  organisationId String
+  candidateId    String
+  fileId         String
+  kind           DocumentKind @default(RESUME)
+  createdAt      DateTime     @default(now())
+
+  candidate Candidate @relation(fields: [candidateId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@index([candidateId])
+}
+
+// Personal resume versions (owned by the user, shared with an employer by
+// snapshot when they apply).
+model ResumeVersion {
+  id            String      @id @default(cuid())
+  userId        String
+  label         String
+  fileId        String
+  extractedText String?
+  parsed        Json? // structured extraction
+  parseStatus   ParseStatus @default(PENDING)
+  parseWarnings String[]
+  correctedAt   DateTime?
+  isDefault     Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  @@index([userId])
+}
+
+model InterviewTemplate {
+  id                        String            @id @default(cuid())
+  organisationId            String
+  name                      String
+  description               String?
+  mode                      InterviewMode
+  language                  String            @default("en")
+  durationMinutes           Int               @default(20)
+  questionCount             Int               @default(6)
+  difficulty                String            @default("INTERMEDIATE")
+  questionSelection         QuestionSelection @default(FIXED)
+  maxFollowUps              Int               @default(1)
+  answerSeconds             Int               @default(120)
+  prepSeconds               Int               @default(15)
+  retakesAllowed            Int               @default(0)
+  recordAudio               Boolean           @default(true)
+  storeTranscript           Boolean           @default(true)
+  showTranscriptToCandidate Boolean           @default(false)
+  allowResume               Boolean           @default(true)
+  voice                     String?
+  candidateInstructions     String?
+  accessibilityOptions      Json              @default("{}")
+  completionPolicy          Json              @default("{}")
+  version                   Int               @default(1)
+  archivedAt                DateTime?
+  createdById               String
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+
+  organisation Organisation          @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  questions    InterviewQuestion[]
+  competencies TemplateCompetency[]
+  jobs         Job[]
+  invitations  InterviewInvitation[]
+
+  @@unique([id, organisationId])
+}
+
+model InterviewQuestion {
+  id             String   @id @default(cuid())
+  organisationId String
+  templateId     String
+  position       Int
+  prompt         String
+  guidance       String? // what a good answer covers (hidden from candidate)
+  competencyId   String?
+  answerSeconds  Int?
+  isFollowUpSeed Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  template InterviewTemplate @relation(fields: [templateId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@unique([templateId, position])
+}
+
+model TemplateCompetency {
+  id             String @id @default(cuid())
+  organisationId String
+  templateId     String
+  competencyId   String
+  weight         Int    @default(1)
+
+  template   InterviewTemplate @relation(fields: [templateId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  competency Competency        @relation(fields: [competencyId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@unique([templateId, competencyId])
+}
+
+model Competency {
+  id             String    @id @default(cuid())
+  organisationId String
+  key            String
+  name           String
+  description    String
+  category       String    @default("GENERAL") // TECHNICAL | BEHAVIOURAL | GENERAL
+  archivedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organisation Organisation         @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  rubrics      CompetencyRubric[]
+  jobs         JobCompetency[]
+  templates    TemplateCompetency[]
+
+  @@unique([organisationId, key])
+  @@unique([id, organisationId])
+}
+
+// Versioned rubric. Assessments reference the exact rubric version used.
+model CompetencyRubric {
+  id                   String   @id @default(cuid())
+  organisationId       String
+  competencyId         String
+  version              Int
+  criteria             String[] // observable assessment criteria
+  indicators           Json // { positive: string[], negative: string[] }
+  levels               Json // [{ rating: "R1".."R5", label, descriptor }]
+  evidenceRequirements String
+  scoringGuidance      String
+  isCurrent            Boolean  @default(true)
+  createdById          String
+  createdAt            DateTime @default(now())
+
+  competency Competency @relation(fields: [competencyId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@unique([competencyId, version])
+}
+
+// ───────────────────────────── STUDENTS ─────────────────────────────
+
+model StudentProfile {
+  id                    String        @id @default(cuid())
+  userId                String        @unique
+  headline              String?
+  bio                   String?
+  country               String?
+  city                  String?
+  workArrangement       RemotePolicy?
+  graduationYear        Int?
+  currentInstitution    String?
+  currentDegree         String?
+  fieldOfStudy          String?
+  languages             String[]
+  links                 Json          @default("[]") // [{label,url}]
+  visibility            String        @default("PRIVATE") // PRIVATE | EMPLOYERS_I_APPLY_TO | VERIFIED_EMPLOYERS
+  onboardingCompletedAt DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  user           User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  education      EducationRecord[]
+  skills         StudentSkill[]
+  projects       StudentProject[]
+  certifications StudentCertification[]
+  experiences    StudentExperience[]
+  preference     StudentPreference?
+  accommodations AccommodationRequest[]
+}
+
+model EducationRecord {
+  id               String    @id @default(cuid())
+  studentProfileId String
+  institution      String
+  degree           String
+  fieldOfStudy     String?
+  startDate        DateTime?
+  endDate          DateTime?
+  graduationYear   Int?
+  grade            String?
+  createdAt        DateTime  @default(now())
+
+  student StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+}
+
+model StudentSkill {
+  id               String  @id @default(cuid())
+  studentProfileId String
+  name             String
+  level            String? // BEGINNER | INTERMEDIATE | ADVANCED
+
+  student StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([studentProfileId, name])
+}
+
+model StudentProject {
+  id               String   @id @default(cuid())
+  studentProfileId String
+  title            String
+  description      String?
+  url              String?
+  skills           String[]
+  createdAt        DateTime @default(now())
+
+  student StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+}
+
+model StudentCertification {
+  id               String    @id @default(cuid())
+  studentProfileId String
+  name             String
+  issuer           String?
+  issuedAt         DateTime?
+  url              String?
+
+  student StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+}
+
+model StudentExperience {
+  id               String    @id @default(cuid())
+  studentProfileId String
+  kind             String    @default("INTERNSHIP") // INTERNSHIP | EMPLOYMENT | VOLUNTEER
+  organisation     String
+  title            String
+  description      String?
+  startDate        DateTime?
+  endDate          DateTime?
+
+  student StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+}
+
+model StudentPreference {
+  id                String           @id @default(cuid())
+  studentProfileId  String           @unique
+  desiredRoles      String[]
+  desiredLocations  String[]
+  remotePolicies    RemotePolicy[]
+  employmentTypes   EmploymentType[]
+  opportunityAlerts Boolean          @default(false)
+
+  student StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+}
+
+model AccommodationRequest {
+  id               String              @id @default(cuid())
+  studentProfileId String?
+  userId           String? // null for candidates without an account (interview link)
+  organisationId   String? // which employer it is directed to (if any)
+  applicationId    String?
+  details          String
+  status           AccommodationStatus @default(REQUESTED)
+  responseNote     String?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  student StudentProfile? @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([organisationId])
+}
+
+model UniversityProfile {
+  id              String   @id @default(cuid())
+  organisationId  String   @unique
+  institutionCode String?
+  campusLocations String[]
+  accreditation   String?
+  createdAt       DateTime @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+}
+
+model PlacementProgramme {
+  id             String   @id @default(cuid())
+  organisationId String // the university
+  name           String
+  description    String?
+  academicYear   String?
+  eligibility    Json     @default("{}") // { graduationYears:[], degrees:[], minGrade }
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organisation Organisation        @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  cohorts      StudentCohort[]
+  employers    ProgrammeEmployer[]
+
+  @@unique([id, organisationId])
+}
+
+// Employers participating in a university programme (cross-tenant relation:
+// grants nothing beyond aggregate progress counts; never assessments).
+model ProgrammeEmployer {
+  id                     String   @id @default(cuid())
+  programmeId            String
+  employerOrganisationId String
+  status                 String   @default("INVITED") // INVITED | ACTIVE | ENDED
+  createdAt              DateTime @default(now())
+
+  programme PlacementProgramme @relation(fields: [programmeId], references: [id], onDelete: Cascade)
+
+  @@unique([programmeId, employerOrganisationId])
+}
+
+model StudentCohort {
+  id             String   @id @default(cuid())
+  organisationId String
+  programmeId    String?
+  name           String
+  graduationYear Int?
+  createdAt      DateTime @default(now())
+
+  organisation Organisation        @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  programme    PlacementProgramme? @relation(fields: [programmeId, organisationId], references: [id, organisationId])
+  members      CohortMembership[]
+
+  @@unique([organisationId, name])
+  @@unique([id, organisationId])
+}
+
+// Links a personal student account to a university cohort. The student must
+// accept (consent) before the university sees anything beyond the invite.
+model CohortMembership {
+  id             String    @id @default(cuid())
+  organisationId String
+  cohortId       String
+  userId         String?
+  inviteEmail    String
+  studentNumber  String?
+  status         String    @default("INVITED") // INVITED | ACTIVE | DECLINED | REMOVED
+  consentedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  cohort StudentCohort @relation(fields: [cohortId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  user   User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([cohortId, inviteEmail])
+  @@index([userId])
+}
+
+model SavedJob {
+  id        String   @id @default(cuid())
+  userId    String
+  jobId     String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job  Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, jobId])
+}
+
+// Private practice. Never tenant-owned; never visible to employers unless the
+// student creates an explicit, revocable PracticeShare (not enabled by default).
+model PracticeInterview {
+  id              String         @id @default(cuid())
+  userId          String
+  targetRole      String
+  focus           String         @default("GENERAL") // GENERAL | ROLE_SPECIFIC
+  language        String         @default("en")
+  mode            InterviewMode  @default(STRUCTURED_AUDIO)
+  durationMinutes Int            @default(10)
+  questionCount   Int            @default(4)
+  status          PracticeStatus @default(IN_PROGRESS)
+  providerMode    ProviderMode   @default(LIVE)
+  questions       Json           @default("[]")
+  currentIndex    Int            @default(0)
+  creditEntryId   String?
+  startedAt       DateTime       @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime       @default(now())
+
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers  PracticeAnswer[]
+  feedback PracticeFeedback?
+
+  @@index([userId, createdAt])
+}
+
+model PracticeAnswer {
+  id          String   @id @default(cuid())
+  practiceId  String
+  position    Int
+  question    String
+  transcript  String
+  audioFileId String?
+  durationMs  Int?
+  createdAt   DateTime @default(now())
+
+  practice PracticeInterview @relation(fields: [practiceId], references: [id], onDelete: Cascade)
+
+  @@unique([practiceId, position])
+}
+
+model PracticeFeedback {
+  id            String   @id @default(cuid())
+  practiceId    String   @unique
+  summary       String
+  perQuestion   Json // [{position, relevance, clarity, completeness, suggestions[], exampleStructure}]
+  strengths     String[]
+  improvements  String[]
+  modelVersion  String
+  promptVersion String
+  createdAt     DateTime @default(now())
+
+  practice PracticeInterview @relation(fields: [practiceId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────── INTERVIEWS ─────────────────────────────
+
+model InterviewInvitation {
+  id             String    @id @default(cuid())
+  organisationId String
+  applicationId  String
+  templateId     String
+  tokenHash      String    @unique
+  email          String
+  expiresAt      DateTime
+  sentAt         DateTime?
+  openedAt       DateTime?
+  revokedAt      DateTime?
+  remindersSent  Int       @default(0)
+  createdById    String
+  createdAt      DateTime  @default(now())
+
+  application Application       @relation(fields: [applicationId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  template    InterviewTemplate @relation(fields: [templateId, organisationId], references: [id, organisationId])
+  session     InterviewSession?
+
+  @@unique([id, organisationId])
+  @@index([organisationId, applicationId])
+}
+
+model InterviewSession {
+  id                   String                 @id @default(cuid())
+  organisationId       String
+  applicationId        String
+  invitationId         String                 @unique
+  candidateUserId      String?
+  status               InterviewSessionStatus @default(CREATED)
+  mode                 InterviewMode
+  providerMode         ProviderMode           @default(LIVE)
+  config               Json // frozen snapshot of the template at invite time
+  plan                 Json                   @default("[]") // ordered question plan
+  currentIndex         Int                    @default(0)
+  followUpsUsed        Int                    @default(0)
+  conversation         Json                   @default("[]") // realtime-mode turn log (role, text, ts)
+  attemptsUsed         Int                    @default(0)
+  resumeTokenHash      String?
+  creditReservationKey String?
+  billable             Boolean                @default(false)
+  billingOutcome       String? // CONSUMED | RELEASED | NONE
+  failureReason        String?
+  llmModel             String?
+  promptVersion        String?
+  startedAt            DateTime?
+  lastActivityAt       DateTime?
+  completedAt          DateTime?
+  expiresAt            DateTime?
+  version              Int                    @default(0) // optimistic concurrency
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  organisation Organisation        @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  application  Application         @relation(fields: [applicationId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  invitation   InterviewInvitation @relation(fields: [invitationId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  events       SessionEvent[]
+  answers      Answer[]
+  transcript   TranscriptSegment[]
+  audio        AudioAsset[]
+  assessment   Assessment?
+  consents     ConsentRecord[]
+
+  @@unique([id, organisationId])
+  @@unique([invitationId, organisationId])
+  @@index([organisationId, status])
+}
+
+model SessionEvent {
+  id             String                  @id @default(cuid())
+  organisationId String
+  sessionId      String
+  type           String // STATE_CHANGE | MIC_CHECK | DISCONNECT | RECONNECT | PROVIDER_ERROR | ...
+  fromStatus     InterviewSessionStatus?
+  toStatus       InterviewSessionStatus?
+  data           Json                    @default("{}")
+  idempotencyKey String?
+  createdAt      DateTime                @default(now())
+
+  session InterviewSession @relation(fields: [sessionId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@unique([sessionId, idempotencyKey])
+  @@index([sessionId, createdAt])
+}
+
+model Answer {
+  id             String    @id @default(cuid())
+  organisationId String
+  sessionId      String
+  position       Int
+  attempt        Int       @default(1)
+  questionText   String
+  questionId     String?
+  competencyId   String?
+  isFollowUp     Boolean   @default(false)
+  audioAssetId   String?
+  transcript     String?
+  textResponse   String? // accessible typed-answer alternative
+  durationMs     Int?
+  startedAt      DateTime?
+  submittedAt    DateTime  @default(now())
+
+  session InterviewSession @relation(fields: [sessionId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@unique([sessionId, position, attempt])
+}
+
+model TranscriptSegment {
+  id             String   @id @default(cuid())
+  organisationId String
+  sessionId      String
+  answerId       String?
+  speaker        String // CANDIDATE | INTERVIEWER
+  text           String
+  startMs        Int?
+  endMs          Int?
+  sequence       Int
+  createdAt      DateTime @default(now())
+
+  session InterviewSession @relation(fields: [sessionId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@unique([sessionId, sequence])
+}
+
+model AudioAsset {
+  id             String   @id @default(cuid())
+  organisationId String
+  sessionId      String
+  fileId         String
+  answerPosition Int?
+  speaker        String   @default("CANDIDATE")
+  durationMs     Int?
+  createdAt      DateTime @default(now())
+
+  session InterviewSession @relation(fields: [sessionId, organisationId], references: [id, organisationId], onDelete: Cascade)
+}
+
+model Assessment {
+  id               String           @id @default(cuid())
+  organisationId   String
+  sessionId        String           @unique
+  status           AssessmentStatus @default(PENDING)
+  summary          String?
+  evidenceCoverage Float? // share of competencies with sufficient evidence
+  modelVersion     String?
+  promptVersion    String?
+  providerMode     ProviderMode     @default(LIVE)
+  rawOutput        Json?
+  failureReason    String?
+  assessedAt       DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  session InterviewSession   @relation(fields: [sessionId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  results AssessmentResult[]
+  reviews AssessmentReview[]
+
+  @@unique([id, organisationId])
+  @@unique([sessionId, organisationId])
+}
+
+model AssessmentResult {
+  id              String            @id @default(cuid())
+  organisationId  String
+  assessmentId    String
+  competencyId    String
+  rubricId        String
+  rubricVersion   Int
+  rating          CompetencyRating
+  explanation     String
+  missingEvidence String?
+  uncertainty     String // LOW | MEDIUM | HIGH
+  humanRating     CompetencyRating?
+  overrideReason  String?
+  overriddenById  String?
+  overriddenAt    DateTime?
+  createdAt       DateTime          @default(now())
+
+  assessment Assessment           @relation(fields: [assessmentId, organisationId], references: [id, organisationId], onDelete: Cascade)
+  evidence   AssessmentEvidence[]
+
+  @@unique([assessmentId, competencyId])
+  @@unique([id, organisationId])
+}
+
+model AssessmentEvidence {
+  id             String  @id @default(cuid())
+  organisationId String
+  resultId       String
+  excerpt        String // verbatim candidate words (validated against transcript)
+  answerPosition Int?
+  startMs        Int?
+  endMs          Int?
+  supports       String  @default("POSITIVE") // POSITIVE | NEGATIVE | NEUTRAL
+  verified       Boolean @default(false) // true when the excerpt was found verbatim in the transcript
+
+  result AssessmentResult @relation(fields: [resultId, organisationId], references: [id, organisationId], onDelete: Cascade)
+}
+
+model AssessmentReview {
+  id             String         @id @default(cuid())
+  organisationId String
+  assessmentId   String
+  reviewerId     String
+  decision       ReviewDecision
+  notes          String?
+  createdAt      DateTime       @default(now())
+
+  assessment Assessment @relation(fields: [assessmentId, organisationId], references: [id, organisationId], onDelete: Cascade)
+}
+
+model ReviewerFeedback {
+  id              String   @id @default(cuid())
+  organisationId  String
+  applicationId   String
+  reviewerId      String
+  recommendation  String // STRONG_YES | YES | NO | STRONG_NO | UNDECIDED
+  competencyNotes Json     @default("[]") // [{competencyId, rating, note}]
+  summary         String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  application Application @relation(fields: [applicationId, organisationId], references: [id, organisationId], onDelete: Cascade)
+
+  @@unique([applicationId, reviewerId])
+}
+
+// Explicit, approved text the employer chooses to share with the candidate.
+model CandidateFeedbackDisclosure {
+  id             String                   @id @default(cuid())
+  organisationId String
+  applicationId  String
+  body           String
+  status         FeedbackDisclosureStatus @default(DRAFT)
+  authorId       String
+  approvedById   String?
+  approvedAt     DateTime?
+  createdAt      DateTime                 @default(now())
+  updatedAt      DateTime                 @updatedAt
+
+  application Application @relation(fields: [applicationId, organisationId], references: [id, organisationId], onDelete: Cascade)
+}
+
+model ConsentRecord {
+  id             String      @id @default(cuid())
+  userId         String?
+  email          String?
+  organisationId String?
+  sessionId      String?
+  type           ConsentType
+  granted        Boolean
+  noticeVersion  String
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime    @default(now())
+
+  user    User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  session InterviewSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([sessionId])
+}
+
+// ───────────────────────────── BILLING ─────────────────────────────
+
+model Plan {
+  id            String       @id @default(cuid())
+  key           String       @unique
+  name          String
+  description   String?
+  audience      String       @default("EMPLOYER") // EMPLOYER | UNIVERSITY | STUDENT
+  interval      PlanInterval @default(MONTH)
+  priceAmount   Int // minor units, configured by the platform admin
+  currency      String       @default("usd")
+  stripePriceId String?
+  trialDays     Int          @default(0)
+  isPublic      Boolean      @default(true)
+  isActive      Boolean      @default(true)
+  sortOrder     Int          @default(0)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  entitlements  PlanEntitlement[]
+  subscriptions Subscription[]
+}
+
+model PlanEntitlement {
+  id     String @id @default(cuid())
+  planId String
+  key    String // seats | monthly_interview_credits | feature.realtime_interviews | feature.campus | ...
+  value  String // numeric or "true"
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, key])
+}
+
+model CreditPack {
+  id            String   @id @default(cuid())
+  key           String   @unique
+  name          String
+  credits       Int
+  priceAmount   Int
+  currency      String   @default("usd")
+  stripePriceId String?
+  audience      String   @default("EMPLOYER") // EMPLOYER | STUDENT
+  expiresInDays Int? // disclosed expiry policy (null = no expiry)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Subscription {
+  id                     String             @id @default(cuid())
+  organisationId         String
+  planId                 String
+  status                 SubscriptionStatus
+  provider               String             @default("stripe")
+  providerSubscriptionId String?            @unique
+  currentPeriodStart     DateTime
+  currentPeriodEnd       DateTime
+  cancelAtPeriodEnd      Boolean            @default(false)
+  canceledAt             DateTime?
+  trialEndsAt            DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  plan         Plan         @relation(fields: [planId], references: [id])
+
+  @@index([organisationId, status])
+}
+
+model CreditAccount {
+  id             String             @id @default(cuid())
+  ownerType      CreditAccountOwner
+  organisationId String?            @unique
+  userId         String?            @unique
+  // Cached balances, updated in the same transaction as ledger inserts.
+  // The ledger is the source of truth (see reconcile()).
+  available      Int                @default(0)
+  reserved       Int                @default(0)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  entries CreditLedgerEntry[]
+}
+
+// Immutable ledger. `amountAvailable`/`amountReserved` are signed deltas.
+model CreditLedgerEntry {
+  id               String          @id @default(cuid())
+  accountId        String
+  organisationId   String?
+  type             CreditEntryType
+  amountAvailable  Int
+  amountReserved   Int             @default(0)
+  balanceAvailable Int // running balance after this entry
+  balanceReserved  Int
+  idempotencyKey   String
+  reference        String? // session id, checkout id, invoice id
+  reason           String?
+  actorUserId      String?
+  expiresAt        DateTime?
+  createdAt        DateTime        @default(now())
+
+  account CreditAccount @relation(fields: [accountId], references: [id])
+
+  @@unique([accountId, idempotencyKey])
+  @@index([accountId, createdAt])
+}
+
+model UsageRecord {
+  id             String   @id @default(cuid())
+  organisationId String?
+  userId         String?
+  sessionId      String?
+  kind           String // LLM | STT | TTS | STORAGE | EMAIL
+  provider       String
+  model          String?
+  units          Float // tokens, seconds, characters, bytes
+  unitLabel      String
+  costMicros     Int      @default(0) // estimated provider cost in micro-USD
+  createdAt      DateTime @default(now())
+
+  @@index([organisationId, createdAt])
+  @@index([kind, createdAt])
+}
+
+model CheckoutSession {
+  id                String         @id @default(cuid())
+  organisationId    String?
+  userId            String?
+  kind              CheckoutKind
+  planId            String?
+  creditPackId      String?
+  provider          String         @default("stripe")
+  providerSessionId String         @unique
+  status            CheckoutStatus @default(OPEN)
+  url               String?
+  createdById       String
+  createdAt         DateTime       @default(now())
+  completedAt       DateTime?
+}
+
+model PaymentEvent {
+  id              String             @id @default(cuid())
+  provider        String             @default("stripe")
+  providerEventId String
+  type            String
+  status          PaymentEventStatus @default(RECEIVED)
+  organisationId  String?
+  payload         Json
+  error           String?
+  receivedAt      DateTime           @default(now())
+  processedAt     DateTime?
+
+  @@unique([provider, providerEventId])
+  @@index([status])
+}
+
+model Invoice {
+  id                String        @id @default(cuid())
+  organisationId    String?
+  userId            String?
+  providerInvoiceId String        @unique
+  number            String?
+  status            InvoiceStatus
+  amountDue         Int
+  amountPaid        Int
+  currency          String
+  hostedUrl         String?
+  pdfUrl            String?
+  periodStart       DateTime?
+  periodEnd         DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([organisationId])
+}
+
+model Refund {
+  id               String   @id @default(cuid())
+  organisationId   String?
+  providerRefundId String   @unique
+  invoiceId        String?
+  amount           Int
+  currency         String
+  creditsReversed  Int      @default(0)
+  reason           String?
+  createdAt        DateTime @default(now())
+}
+
+// ───────────────────────── PLATFORM OPERATIONS ─────────────────────────
+
+model Notification {
+  id             String    @id @default(cuid())
+  userId         String
+  organisationId String?
+  type           String
+  title          String
+  body           String
+  link           String?
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+model NotificationPreference {
+  id      String  @id @default(cuid())
+  userId  String
+  channel String // EMAIL | IN_APP
+  topic   String // interview_reminders | application_updates | opportunity_alerts | product
+  enabled Boolean @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, channel, topic])
+}
+
+model EmailDelivery {
+  id                String      @id @default(cuid())
+  organisationId    String?
+  userId            String?
+  toAddress         String
+  template          String
+  subject           String
+  // Bodies are retained only for the console/dev provider so developers can
+  // follow links; production providers store metadata only.
+  bodyText          String?
+  status            EmailStatus @default(QUEUED)
+  provider          String
+  providerMessageId String?
+  error             String?
+  attempts          Int         @default(0)
+  idempotencyKey    String?     @unique
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  @@index([status])
+  @@index([toAddress])
+}
+
+model IntegrationConnection {
+  id             String   @id @default(cuid())
+  organisationId String
+  kind           String // WEBHOOK | CALENDAR | ATS | SSO
+  name           String
+  config         Json     @default("{}") // non-secret config only
+  secretRef      String? // reference to a secret stored in the secrets manager / encrypted value
+  isEnabled      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+}
+
+model WebhookEvent {
+  id             String   @id @default(cuid())
+  source         String // stripe | email | outbound
+  externalId     String?
+  organisationId String?
+  type           String
+  payload        Json
+  status         String   @default("RECEIVED")
+  attempts       Int      @default(0)
+  lastError      String?
+  createdAt      DateTime @default(now())
+
+  @@unique([source, externalId])
+}
+
+model SupportTicket {
+  id             String         @id @default(cuid())
+  organisationId String?
+  requesterId    String
+  subject        String
+  body           String
+  status         TicketStatus   @default(OPEN)
+  priority       TicketPriority @default(NORMAL)
+  assigneeId     String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organisation Organisation?          @relation(fields: [organisationId], references: [id], onDelete: SetNull)
+  messages     SupportTicketMessage[]
+}
+
+model SupportTicketMessage {
+  id        String   @id @default(cuid())
+  ticketId  String
+  authorId  String
+  body      String
+  internal  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+}
+
+model DataSubjectRequest {
+  id             String    @id @default(cuid())
+  userId         String?
+  email          String
+  organisationId String? // when directed at a specific controller (employer)
+  type           DsrType
+  status         DsrStatus @default(RECEIVED)
+  details        String?
+  resultFileId   String?
+  handledById    String?
+  dueAt          DateTime
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  user        User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  deletionJob DeletionJob?
+}
+
+model RetentionPolicy {
+  id             String   @id @default(cuid())
+  organisationId String? // null = platform default
+  dataCategory   String // AUDIO | TRANSCRIPT | ASSESSMENT | APPLICATION | RESUME | AUDIT
+  retainDays     Int
+  action         String   @default("DELETE") // DELETE | ANONYMISE
+  updatedById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organisation Organisation? @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, dataCategory])
+}
+
+model DeletionJob {
+  id         String            @id @default(cuid())
+  requestId  String?           @unique
+  scope      String // USER_ACCOUNT | ORGANISATION | RETENTION_SWEEP
+  targetId   String
+  status     DeletionJobStatus @default(PENDING)
+  summary    Json              @default("{}")
+  error      String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+  createdAt  DateTime          @default(now())
+
+  request DataSubjectRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+}
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  description String?
+  enabled     Boolean  @default(false)
+  rules       Json     @default("{}") // { organisationIds: [], percentage }
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model PlatformSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model JobRun {
+  id             String    @id @default(cuid())
+  queue          String
+  name           String
+  externalId     String?
+  organisationId String?
+  payload        Json? // ids only — never personal data
+  status         String    @default("QUEUED") // QUEUED | RUNNING | COMPLETED | FAILED
+  attempts       Int       @default(0)
+  error          String?
+  createdAt      DateTime  @default(now())
+  finishedAt     DateTime?
+
+  @@index([status, createdAt])
+}
+
+model RateLimitBucket {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+}
