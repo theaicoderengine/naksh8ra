@@ -10,7 +10,7 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
-    "worker": "tsx src/worker/index.ts",
+    "worker": "SERVICE_NAME=atlas-worker tsx src/worker/index.ts",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate deploy",

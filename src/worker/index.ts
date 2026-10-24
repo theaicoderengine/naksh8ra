@@ -10,7 +10,7 @@ import { newRedisConnection } from "../server/queue/redis";
 import { logger } from "../server/logger";
 import { prisma } from "../server/db/client";
 
-process.env.SERVICE_NAME = process.env.SERVICE_NAME ?? "atlas-worker";
+// SERVICE_NAME is set by `npm run worker` (the logger reads it at import time).
 const concurrency = Number(process.env.WORKER_CONCURRENCY ?? 8);
 
 const SCHEDULES: { name: JobName; pattern: string }[] = [

@@ -1,0 +1,105 @@
+# Local full-stack environment (NOT a production deployment).
+#   cp .env.example .env.docker   # adjust values
+#   docker compose --env-file .env.docker up --build
+# Services: postgres, redis, mailpit (SMTP sink + UI on :8025), migrate (one-shot),
+# web (:3000), worker. ClamAV is optional: `docker compose --profile scan up`.
+name: atlas
+
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-development}
+  APP_URL: ${APP_URL:-http://localhost:3000}
+  APP_NAME: ${APP_NAME:-Atlas Hiring}
+  DATABASE_URL: postgresql://atlas_app:${ATLAS_APP_PASSWORD:-atlas_app_dev}@postgres:5432/atlas?schema=public
+  MIGRATION_DATABASE_URL: postgresql://atlas_owner:${ATLAS_OWNER_PASSWORD:-atlas_owner_dev}@postgres:5432/atlas?schema=public
+  REDIS_URL: redis://redis:6379
+  QUEUE_MODE: redis
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+  LLM_PROVIDER: ${LLM_PROVIDER:-none}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  STT_PROVIDER: ${STT_PROVIDER:-none}
+  DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+  TTS_PROVIDER: ${TTS_PROVIDER:-browser}
+  ALLOW_FIXTURE_PROVIDERS: ${ALLOW_FIXTURE_PROVIDERS:-false}
+  EMAIL_PROVIDER: smtp
+  SMTP_URL: smtp://mailpit:1025
+  EMAIL_FROM: ${EMAIL_FROM:-Atlas Hiring <no-reply@example.com>}
+  STORAGE_PROVIDER: local
+  STORAGE_LOCAL_DIR: /app/storage
+  MALWARE_SCANNER: ${MALWARE_SCANNER:-none}
+  CLAMAV_HOST: clamav
+  PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-none}
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+  PLATFORM_ADMIN_EMAILS: ${PLATFORM_ADMIN_EMAILS:-}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_dev}
+      ATLAS_OWNER_PASSWORD: ${ATLAS_OWNER_PASSWORD:-atlas_owner_dev}
+      ATLAS_APP_PASSWORD: ${ATLAS_APP_PASSWORD:-atlas_app_dev}
+      ATLAS_DB_NAME: atlas
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/db/bootstrap-roles.sql:/bootstrap/bootstrap-roles.sql:ro
+      - ./scripts/db/docker-init.sh:/docker-entrypoint-initdb.d/10-atlas.sh:ro
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d atlas"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: [redisdata:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.20
+    ports: ["8025:8025"]
+
+  clamav:
+    image: clamav/clamav:1.4
+    profiles: ["scan"]
+
+  migrate:
+    build: { context: ., target: tooling }
+    environment:
+      <<: *app-env
+      SEED_DEMO: ${SEED_DEMO:-false}
+    command: ["sh", "-c", "npx prisma migrate deploy && npm run db:seed"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  web:
+    build: { context: ., target: web }
+    environment: *app-env
+    ports: ["3000:3000"]
+    volumes: [storage:/app/storage]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  worker:
+    build: { context: ., target: tooling }
+    environment:
+      <<: *app-env
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-8}
+      WORKER_HEALTH_PORT: "3001"
+    volumes: [storage:/app/storage]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+volumes:
+  pgdata:
+  redisdata:
+  storage:

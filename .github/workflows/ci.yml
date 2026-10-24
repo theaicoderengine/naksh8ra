@@ -1,0 +1,143 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  # CI-only throwaway credentials for the ephemeral service containers below.
+  PGPASSWORD: postgres_ci
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://atlas_app:atlas_app_dev@localhost:5432/atlas?schema=public
+      MIGRATION_DATABASE_URL: postgresql://atlas_owner:atlas_owner_dev@localhost:5432/atlas?schema=public
+      APP_ENV: test
+      APP_URL: http://localhost:3000
+      QUEUE_MODE: inline
+      LLM_PROVIDER: fixture
+      STT_PROVIDER: fixture
+      TTS_PROVIDER: browser
+      ALLOW_FIXTURE_PROVIDERS: "true"
+      EMAIL_PROVIDER: console
+      STORAGE_PROVIDER: local
+      LOG_LEVEL: warn
+      EXPOSE_TEST_TOKENS: "true"
+      RATE_LIMIT_MULTIPLIER: "50"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Bootstrap database roles (atlas, atlas_test)
+        run: |
+          for db in atlas atlas_test; do
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
+              -v owner_password="'atlas_owner_dev'" -v app_password="'atlas_app_dev'" -v db_name=$db \
+              -f scripts/db/bootstrap-roles.sql
+          done
+          psql -h localhost -U postgres -c "CREATE DATABASE ci_shadow OWNER atlas_owner"
+
+      - name: Migrate
+        run: npx prisma migrate deploy
+
+      - name: Migrations match schema (no drift)
+        run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "postgresql://atlas_owner:atlas_owner_dev@localhost:5432/ci_shadow" --exit-code
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit + integration tests (incl. RLS / cross-tenant / security)
+        run: npm test
+
+      - name: OpenAPI spec is up to date
+        run: npm run openapi && git diff --exit-code docs/openapi.json
+
+      - name: Build
+        run: npm run build
+
+      - name: Seed demo data for E2E
+        run: npm run db:seed
+        env:
+          SEED_DEMO: "true"
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E (Playwright)
+        run: npm run test:e2e
+
+      - name: Load test (smoke-sized)
+        run: |
+          (npm run start > server.log 2>&1 &)
+          for i in $(seq 1 30); do curl -sf http://localhost:3000/api/health && break; sleep 2; done
+          PERF_REQUESTS=100 PERF_INTERVIEWS=10 npm run perf
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Reports known advisories in production dependencies. Some remaining
+      # advisories need major upgrades (see docs/known-limitations.md); the
+      # job fails only on critical findings until those upgrades land.
+      - run: npm audit --omit=dev --audit-level=critical
+
+  container:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build web image
+        run: docker build --target web -t atlas-web:${{ github.sha }} .
+      - name: Build tooling (worker/migrate) image
+        run: docker build --target tooling -t atlas-tooling:${{ github.sha }} .
+      - name: Scan web image (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: atlas-web:${{ github.sha }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "0" # report-only until the base-image policy is agreed

@@ -19,7 +19,7 @@ const prisma = new PrismaClient({ datasources: { db: { url: process.env.MIGRATIO
 
 async function demo() {
   if (process.env.APP_ENV === "production") throw new Error("Refusing to seed demo data in production");
-  const password = process.env.SEED_DEMO_PASSWORD ?? "Demo-password-2026!";
+  const password = process.env.SEED_DEMO_PASSWORD || "Demo-password-2026!";
   const pw = await hashPassword(password);
   const verified = new Date();
 
