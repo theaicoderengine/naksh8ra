@@ -15,8 +15,8 @@ export const POST = route({ auth: "none", body: z.object({ email: emailSchema, p
   if (r.user.platformRole !== "NONE") next = "/admin";
   else if (memberships[0]) next = `/w/${memberships[0].organisation.slug}`;
   else if (student) next = "/student";
-  if (r.mfaRequired) next = `/login/mfa?next=${encodeURIComponent(next)}`;
-  else if (r.user.platformRole !== "NONE") next = "/account/security?mfa=required";
+  // Platform administrators must enrol in MFA before using the admin console.
+  if (!r.mfaRequired && r.user.platformRole !== "NONE") next = "/account/security?mfa=required";
   const res = NextResponse.json({ data: { mfaRequired: r.mfaRequired, emailVerified: !!r.user.emailVerifiedAt, next } });
   return withSessionCookie(res, r.token, r.expiresAt);
 });

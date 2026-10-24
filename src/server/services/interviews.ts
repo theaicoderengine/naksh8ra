@@ -770,3 +770,21 @@ export function assertCandidateNotHr(session: SessionInfo | null) {
 }
 
 export { CANDIDATE_ACTIVE_STATES };
+
+export async function listInterviews(ctx: OrgContext, filter: { status?: string }) {
+  return withOrg(ctx.org.id, ctx.userId, async (tx) => {
+    const { assignedJobIds } = await import("./applications");
+    const scope = await assignedJobIds(ctx, tx);
+    const statusFilter =
+      filter.status === "review" ? { in: ["ASSESSED", "REQUIRES_REVIEW"] as InterviewSessionStatus[] }
+      : filter.status === "active" ? { in: ["INVITED", "READY", "IN_PROGRESS", "INTERRUPTED"] as InterviewSessionStatus[] }
+      : filter.status === "failed" ? { in: ["FAILED"] as InterviewSessionStatus[] }
+      : undefined;
+    return tx.interviewSession.findMany({
+      where: { organisationId: ctx.org.id, ...(statusFilter ? { status: statusFilter } : {}), ...(scope ? { application: { jobId: { in: scope } } } : {}) },
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+      select: { id: true, status: true, mode: true, providerMode: true, createdAt: true, completedAt: true, expiresAt: true, application: { select: { id: true, candidate: { select: { firstName: true, lastName: true } }, job: { select: { id: true, title: true } } } }, assessment: { select: { status: true, evidenceCoverage: true } } },
+    });
+  });
+}

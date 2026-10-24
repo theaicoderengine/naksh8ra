@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design tokens ── change these to rebrand. */
+:root {
+  --font-sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-display: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --radius: 8px;
+  --bg: 248 249 251;
+  --surface: 255 255 255;
+  --muted: 241 243 246;
+  --border: 226 230 236;
+  --fg: 15 23 42;
+  --subtle: 92 102 120;
+  --primary: 29 78 216;
+  --primary-fg: 255 255 255;
+  --primary-soft: 232 239 253;
+  --accent: 13 148 136;
+  --accent-soft: 225 245 242;
+  --success: 22 128 61;
+  --success-soft: 226 244 233;
+  --warning: 180 83 9;
+  --warning-soft: 254 243 224;
+  --danger: 190 18 60;
+  --danger-soft: 253 232 237;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: 11 15 23;
+    --surface: 17 22 32;
+    --muted: 26 32 45;
+    --border: 40 48 64;
+    --fg: 231 235 242;
+    --subtle: 150 160 178;
+    --primary: 96 141 250;
+    --primary-fg: 10 14 22;
+    --primary-soft: 28 40 70;
+    --accent: 45 212 191;
+    --accent-soft: 18 52 50;
+    --success: 74 222 128;
+    --success-soft: 20 50 34;
+    --warning: 251 191 36;
+    --warning-soft: 60 44 12;
+    --danger: 251 113 133;
+    --danger-soft: 64 22 32;
+    color-scheme: dark;
+  }
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { @apply bg-bg text-fg font-sans antialiased; }
+h1, h2, h3, h4 { @apply font-display tracking-tight; }
+:focus-visible { outline: 2px solid rgb(var(--primary)); outline-offset: 2px; border-radius: 4px; }
+::selection { background: rgb(var(--primary) / 0.18); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+
+.skip-link { @apply sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-surface focus:px-4 focus:py-2 focus:shadow-pop; }
+.prose-body p { @apply mb-3 leading-relaxed; }
+.prose-body h2 { @apply mt-8 mb-3 text-xl font-semibold; }
+.prose-body h3 { @apply mt-6 mb-2 text-lg font-semibold; }
+.prose-body ul { @apply mb-3 list-disc pl-6 space-y-1; }
