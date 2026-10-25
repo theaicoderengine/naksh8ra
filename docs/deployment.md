@@ -30,10 +30,11 @@ Any container platform works (ECS/Fargate, Cloud Run + a worker service, Kuberne
 3. **Build:** `docker build --target web -t <registry>/atlas-web:<git-sha> .` and `--target tooling -t <registry>/atlas-tooling:<git-sha>`. Pass `NEXT_PUBLIC_*` branding as build args. Use `--build-arg BASE_IMAGE=<mirror>/node:22-bookworm-slim` for a registry mirror.
 4. **Migrate & seed:** run the tooling image with `sh -c "npx prisma migrate deploy && npm run db:seed"` (system data only; idempotent).
 5. **First admin:** set `PLATFORM_ADMIN_EMAILS=you@company.com`, register that account, verify email, enrol MFA (mandatory), then clear the variable.
-6. **Plans:** Admin → Plans: replace placeholder plans/packs, prices and Stripe Price ids ([billing.md](billing.md)).
-7. **Domains & DNS:** `APP_URL=https://app.example.com` (exact public origin — used for CSRF checks and links). Configure email sending domain SPF/DKIM/DMARC. Stripe webhook → `https://app.example.com/api/v1/webhooks/stripe`.
-8. **HTTPS:** TLS 1.2+ at the edge; HSTS is sent by the app in production. Cookies are `__Host-` + `Secure`, so the app must be served over HTTPS.
-9. **Monitoring:** see [operations.md](operations.md).
+6. **AI access:** Admin → AI access — platform AI is denied by default. Grant it per organisation, capability and provider (with limits), and for personal accounts if student practice is offered. Organisations can alternatively connect their own keys in Settings → AI providers. Re-run `npm run db:seed` on each deploy so new permissions (e.g. `ai.manage`) reach system roles.
+7. **Plans:** Admin → Plans: replace placeholder plans/packs, prices and Stripe Price ids ([billing.md](billing.md)).
+8. **Domains & DNS:** `APP_URL=https://app.example.com` (exact public origin — used for CSRF checks and links). Configure email sending domain SPF/DKIM/DMARC. Stripe webhook → `https://app.example.com/api/v1/webhooks/stripe`.
+9. **HTTPS:** TLS 1.2+ at the edge; HSTS is sent by the app in production. Cookies are `__Host-` + `Secure`, so the app must be served over HTTPS.
+10. **Monitoring:** see [operations.md](operations.md).
 
 ## Release procedure
 

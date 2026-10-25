@@ -20,6 +20,14 @@ This document describes the controls that are implemented and tested. It is not 
 - **Candidates/students** own their personal data. Universities see students only through consented cohort membership, never employer assessments.
 - Every state-changing organisation endpoint declares a required permission; a contract test fails if one does not (`tests/unit/api-contract.test.ts`).
 
+## AI credentials
+
+- Platform AI keys stay in the server environment; organisations reach them only through explicit super-admin grants per provider and capability (deny by default; RLS prevents organisations writing grants).
+- Organisation keys are AES-256-GCM encrypted, isolated by RLS, decrypted per operation on the server, and only masked metadata (last 4, short fingerprint) is ever returned. Keys are tested before activation.
+- SDK clients are created per operation; empty keys are refused so SDKs cannot fall back to the platform's `*_API_KEY` environment variables.
+- Provider error text is scrubbed of key-like strings before logging/storing; logs also redact `apiKey`, `encryptedKey` and provider key headers.
+- No silent fallback across tenants, providers, models, or from an organisation key to a platform key. Details: [ai-providers.md](ai-providers.md).
+
 ## Tenant isolation
 
 See [architecture.md](architecture.md#multi-tenancy). Tested by `tests/integration/rls.test.ts` (database level) and `tests/integration/security.test.ts` + E2E journey 19 (API/UI level): another tenant's ids return 404 (no existence oracle), forged organisation headers are rejected, search/export/reports/file links/background jobs are tenant-scoped.

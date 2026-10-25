@@ -10005,6 +10005,444 @@
         }
       }
     },
+    "/ai/settings": {
+      "get": {
+        "tags": [
+          "AI providers"
+        ],
+        "summary": "Organisation AI settings: masked key metadata, effective provider per capability, platform grants (read-only), usage and recent errors",
+        "security": [
+          {
+            "sessionCookie": [],
+            "orgHeader": []
+          }
+        ],
+        "parameters": [],
+        "x-required-permission": "ai.manage",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/credentials/{provider}/test-key": {
+      "post": {
+        "tags": [
+          "AI providers"
+        ],
+        "summary": "Test an API key + model without saving it (no content generated)",
+        "security": [
+          {
+            "sessionCookie": [],
+            "orgHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-required-permission": "ai.manage",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 400
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  }
+                },
+                "required": [
+                  "apiKey",
+                  "model"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/credentials/{provider}": {
+      "put": {
+        "tags": [
+          "AI providers"
+        ],
+        "summary": "Connect, rotate or change model of the organisation's own key (tested before activation; key never returned)",
+        "security": [
+          {
+            "sessionCookie": [],
+            "orgHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-required-permission": "ai.manage",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 400
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120
+                  }
+                },
+                "required": [
+                  "model"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "AI providers"
+        ],
+        "summary": "Remove the organisation's key (selected routes then fail clearly; no silent fallback)",
+        "security": [
+          {
+            "sessionCookie": [],
+            "orgHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-required-permission": "ai.manage",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/credentials/{provider}/test": {
+      "post": {
+        "tags": [
+          "AI providers"
+        ],
+        "summary": "Re-test the stored key and record its health",
+        "security": [
+          {
+            "sessionCookie": [],
+            "orgHeader": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-required-permission": "ai.manage",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ai/routes": {
+      "put": {
+        "tags": [
+          "AI providers"
+        ],
+        "summary": "Choose credential source/provider per capability (platform only where granted)",
+        "security": [
+          {
+            "sessionCookie": [],
+            "orgHeader": []
+          }
+        ],
+        "parameters": [],
+        "x-required-permission": "ai.manage",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "routes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "capability": {
+                          "type": "string",
+                          "enum": [
+                            "JOB_DRAFTING",
+                            "RESUME_PARSING",
+                            "QUESTION_GENERATION",
+                            "INTERVIEW_CONVERSATION",
+                            "ASSESSMENT",
+                            "PRACTICE_COACHING"
+                          ]
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "AUTO",
+                            "ORGANISATION",
+                            "PLATFORM"
+                          ]
+                        },
+                        "provider": {
+                          "type": "string",
+                          "enum": [
+                            "ANTHROPIC",
+                            "OPENAI",
+                            "GEMINI",
+                            "FIXTURE"
+                          ]
+                        },
+                        "model": {
+                          "type": "string",
+                          "maxLength": 120,
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "capability",
+                        "source"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "maxItems": 20
+                  }
+                },
+                "required": [
+                  "routes"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
     "/credits": {
       "get": {
         "tags": [
@@ -11743,6 +12181,437 @@
                   "action",
                   "reason",
                   "confirm"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/platform/ai": {
+      "get": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Organisations' AI access overview and deployment credential status (booleans only)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [],
+        "x-requires": "platform role + MFA",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/platform/ai/personal": {
+      "get": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "AI access for personal (student) accounts",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [],
+        "x-requires": "platform role + MFA",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/platform/ai/personal/grants": {
+      "put": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Grant/revoke platform AI for personal accounts (super-admin; reason required; audited)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [],
+        "x-requires": "platform role + MFA",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500
+                  },
+                  "grants": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string",
+                          "enum": [
+                            "ANTHROPIC",
+                            "OPENAI",
+                            "GEMINI",
+                            "DEEPGRAM",
+                            "ELEVENLABS",
+                            "FIXTURE"
+                          ]
+                        },
+                        "capability": {
+                          "type": "string",
+                          "enum": [
+                            "JOB_DRAFTING",
+                            "RESUME_PARSING",
+                            "QUESTION_GENERATION",
+                            "INTERVIEW_CONVERSATION",
+                            "ASSESSMENT",
+                            "PRACTICE_COACHING",
+                            "TRANSCRIPTION",
+                            "SPEECH_SYNTHESIS"
+                          ]
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "allowedModels": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          },
+                          "maxItems": 20,
+                          "default": []
+                        },
+                        "monthlyRequestLimit": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000000,
+                          "nullable": true,
+                          "default": null
+                        },
+                        "monthlyTokenLimit": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 2000000000,
+                          "nullable": true,
+                          "default": null
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "capability",
+                        "enabled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1,
+                    "maxItems": 60
+                  }
+                },
+                "required": [
+                  "reason",
+                  "grants"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/platform/organisations/{id}/ai": {
+      "get": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Organisation AI access: grants, limits, usage, credential health (masked), audit history",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-requires": "platform role + MFA",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/platform/organisations/{id}/ai/grants": {
+      "put": {
+        "tags": [
+          "Platform"
+        ],
+        "summary": "Grant/revoke platform-funded AI per provider & capability (super-admin; reason required; audited)",
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "x-requires": "platform role + MFA",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "Server / provider error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 5,
+                    "maxLength": 500
+                  },
+                  "grants": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "type": "string",
+                          "enum": [
+                            "ANTHROPIC",
+                            "OPENAI",
+                            "GEMINI",
+                            "DEEPGRAM",
+                            "ELEVENLABS",
+                            "FIXTURE"
+                          ]
+                        },
+                        "capability": {
+                          "type": "string",
+                          "enum": [
+                            "JOB_DRAFTING",
+                            "RESUME_PARSING",
+                            "QUESTION_GENERATION",
+                            "INTERVIEW_CONVERSATION",
+                            "ASSESSMENT",
+                            "PRACTICE_COACHING",
+                            "TRANSCRIPTION",
+                            "SPEECH_SYNTHESIS"
+                          ]
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "allowedModels": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 120
+                          },
+                          "maxItems": 20,
+                          "default": []
+                        },
+                        "monthlyRequestLimit": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 100000000,
+                          "nullable": true,
+                          "default": null
+                        },
+                        "monthlyTokenLimit": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 2000000000,
+                          "nullable": true,
+                          "default": null
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "capability",
+                        "enabled"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "minItems": 1,
+                    "maxItems": 60
+                  }
+                },
+                "required": [
+                  "reason",
+                  "grants"
                 ],
                 "additionalProperties": false
               }

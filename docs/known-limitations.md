@@ -13,6 +13,16 @@ This is a frank list of what is incomplete, unverified or simplified as of hando
 | S3 storage | Only local storage exercised. | **Launch blocker** for multi-node |
 | ClamAV scanning | Adapter implemented; not run. Without it, uploads are stored as `NOT_SCANNED`. | **Launch blocker** for public uploads |
 
+## AI provider access (BYOK / platform grants)
+
+- No organisation or platform key has been exercised against live Gemini, OpenAI or Anthropic services. Gemini behaviour (structured output, 429/5xx/auth handling, model checks) is tested with Google's official SDK over a stubbed HTTP transport; OpenAI and Anthropic connection tests use their SDKs' `models.retrieve` and are untested live. **Launch blocker:** verify each provider on staging.
+- Free-tier eligibility labels come from Google's published model list at the time of writing and are configurable, not fetched live from the provider.
+- Platform token limits are checked before each call; the call that crosses the limit completes, so usage can exceed a token limit by one operation.
+- Personal-account (student) platform limits are shared across all personal accounts, not per student (practice credits still cap each student).
+- Organisation keys cover text generation only; organisations cannot bring their own speech-to-text or text-to-speech keys.
+- Cost estimates exist only for models with configured prices (Anthropic defaults); Gemini/OpenAI show "n/a" until `PROVIDER_PRICES_JSON` is set.
+- Rotating `ENCRYPTION_KEY` requires a re-encryption step for stored organisation keys (not automated).
+
 ## Product scope simplifications
 
 - **Conversational mode is turn-based, not full-duplex streaming.** Each candidate utterance is recorded (silence detection), uploaded, transcribed, answered by the LLM, then spoken. Expect a few seconds of latency per turn with real providers; barge-in (interrupting the interviewer) is not supported. A realtime WebRTC provider integration would need a new adapter with ephemeral client tokens.

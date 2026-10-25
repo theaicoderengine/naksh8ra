@@ -23,6 +23,10 @@
 
 Grants: subscription invoice paid → monthly allowance (`monthly_interview_credits`; annual plans receive 12 × up front), credit-pack checkout completed → pack credits, trial credits on organisation creation, signed manual adjustments by billing admins (reason required, audited). Grants can expire (`credits.expire`).
 
+## AI usage limits (separate from interview credits)
+
+Platform-funded AI is governed by per-organisation grants with optional monthly request/token limits, enforced atomically per operation ([ai-providers.md](ai-providers.md#usage-limits-and-cost)). Organisation-owned keys are billed by the provider directly to that organisation. Estimated AI cost shown in the product is an internal estimate, not provider billing. Interview-credit semantics are unchanged; a failed or denied assessment never consumes an extra credit.
+
 ## Stripe integration
 
 - **Checkout:** hosted Stripe Checkout for subscriptions and packs (`POST /api/v1/billing/checkout`, `/billing/practice-checkout`); customers manage payment methods/cancellation in the hosted **Billing Portal** (`/billing/portal`). Card data never reaches this application.

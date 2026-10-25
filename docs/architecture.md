@@ -88,6 +88,9 @@ Candidates see a simplified status (e.g. "COMPLETED") and never see assessments,
 
 ## AI usage
 
+All AI calls go through the tenant-aware resolver (`src/server/ai/access.ts`): organisation-selected route → organisation key → platform key with an explicit super-admin grant → clear error. See [ai-providers.md](ai-providers.md).
+
+
 Prompts are versioned constants (`jd.v1`, `qgen.v1`, `turn.v1`, `assess.v1`, `resume.v1`, `practiceq.v1`, `practicefb.v1`) and every stored output records the prompt version and provider/model. All untrusted content (resumes, answers, job text) is wrapped in delimited input blocks with an explicit instruction that it is data, not instructions. Outputs are requested as JSON matching a schema and validated with Zod before use. Provider usage (tokens/seconds) is recorded in `UsageRecord` for cost monitoring.
 
 ## Background jobs

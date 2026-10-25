@@ -1,6 +1,6 @@
 # External providers
 
-Every external dependency sits behind a small interface in `src/server/providers`, selected by environment variables. Admin → Health shows the active provider, mode (LIVE / FIXTURE / not configured) and model for each.
+Every external dependency sits behind a small interface in `src/server/providers`, selected by environment variables. **AI access is tenant-aware:** deployment AI keys are usable only by organisations a super-admin has granted, and organisations can connect their own Gemini/OpenAI/Anthropic keys — see [ai-providers.md](ai-providers.md). Admin → Health shows the active provider, mode (LIVE / FIXTURE / not configured) and model for each.
 
 When a provider is not configured, the related feature fails closed with a clear `PROVIDER_NOT_CONFIGURED` (503) message — e.g. no AI interviews can be started, and AI job-description drafting is unavailable. Nothing pretends to work.
 
@@ -8,7 +8,7 @@ When a provider is not configured, the related feature fails closed with a clear
 
 | Capability | Adapters | Verified here | Notes |
 |---|---|---|---|
-| LLM (interviewer, assessment, JD drafts, resume parsing, practice) | `anthropic`, `openai`, `fixture` | **Fixture only** | No API keys were available. Anthropic adapter uses the Messages API with JSON-schema structured output; default model `claude-opus-5-5`, fast model `claude-haiku-5-5` (both configurable). |
+| LLM (interviewer, assessment, JD drafts, resume parsing, practice) | `anthropic`, `openai`, `gemini`, `fixture` — as platform keys or organisation keys | **Fixture only** against live services. Gemini adapter additionally tested with the official SDK over a stubbed HTTP transport (success, 429 quota, 5xx retry, auth, model checks) | No API keys were available. Anthropic: Messages API with JSON-schema output (default `claude-opus-5-5`, fast `claude-haiku-5-5`). Gemini: `@google/genai` with JSON-schema output (default `gemini-2.5-flash`, fast `gemini-2.5-flash-lite`). |
 | Speech-to-text | `openai` (whisper-1), `deepgram`, `fixture` | **Fixture only** | Fixture returns a canned transcript. |
 | Text-to-speech | `browser` (Web Speech API, default), `openai`, `elevenlabs` | Browser speech exercised in E2E (headless Chromium); server TTS not verified | Voice quality of browser TTS varies by OS/browser. |
 | Email | `console` (dev mailbox), `smtp`, `resend`, `postmark` | Console + SMTP code path (Mailpit in compose) not exercised in tests | Configure SPF/DKIM/DMARC for your sending domain. |
@@ -28,7 +28,7 @@ ANTHROPIC_MODEL=claude-opus-5-5
 ANTHROPIC_FAST_MODEL=claude-haiku-5-5
 AI_TIMEOUT_MS=60000
 ```
-or `LLM_PROVIDER=openai` with `OPENAI_API_KEY` / `OPENAI_MODEL`. Usage is recorded per call in `UsageRecord`; cost estimates use `PROVIDER_PRICES_JSON` overrides (estimates only — verify against your contract).
+or `LLM_PROVIDER=openai` with `OPENAI_API_KEY` / `OPENAI_MODEL`, or `LLM_PROVIDER=gemini` with `GEMINI_API_KEY` / `GEMINI_MODEL` / `GEMINI_FAST_MODEL`. Several platform keys can be configured at once; `LLM_PROVIDER` is the default when an organisation is granted more than one. **Configuring a key does not give anyone access** — grant it per organisation and capability in Admin → AI access. Every operation is logged in `AiRequestLog`; cost estimates use `PROVIDER_PRICES_JSON` (estimates only — verify against your contract). Supported models: `AI_MODEL_CATALOG_JSON` (see [ai-providers.md](ai-providers.md#models)).
 
 Before launch: run representative interviews end-to-end on staging with the real model, review assessments against the rubric with HR reviewers, and check latency (the conversational turn path is STT → LLM → TTS sequentially).
 

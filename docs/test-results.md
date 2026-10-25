@@ -1,5 +1,41 @@
 # Test results
 
+## Update 2026-10-25 — tenant-aware AI provider access and BYOK
+
+Re-run in full after adding platform AI grants, organisation-owned keys and Gemini (same environment; fixture providers only; **no live provider credentials were used**).
+
+| Check | Result |
+|---|---|
+| Typecheck (`tsc --noEmit`) | ✅ 0 errors |
+| Lint | ✅ 0 errors, 1 pre-existing warning |
+| Vitest (unit + integration) | ✅ 13 files, **142 / 142 passed** (was 108; +12 provider unit tests, +22 AI access integration tests; 5 existing journey tests updated to grant AI explicitly) |
+| Playwright E2E | ✅ **9 / 9 passed** (+2: organisation connects its own key in Settings → AI providers with a bad key rejected first; super-admin grants platform AI in the admin console after TOTP login) |
+| Migration drift | ✅ no difference |
+| Production build | ✅ |
+| Load test (`PERF_REQUESTS=100 PERF_INTERVIEWS=10`) | ✅ 0 errors; 10/10 concurrent interviews completed and assessed |
+
+Required AI-access tests and where they live:
+
+| Requirement | Test |
+|---|---|
+| Platform AI denied by default for a new organisation | `ai-access` "a new organisation cannot invoke, or indirectly reach…"; personal accounts too; E2E "AI access" |
+| Platform admin granting and revoking | `ai-access` "grant enables exactly that capability; revocation stops the next operation; both are audited"; E2E 18b |
+| Only super-admins (MFA) can change grants; org cannot self-grant | `ai-access` "only MFA-verified super-admins…", "an organisation cannot grant itself platform AI, even with direct database access" (RLS) |
+| Organisation key works without platform permission | `ai-access` BYOK tests; conversational interview test in `privacy-platform` runs on an org key |
+| No unauthorised fallback | `ai-access` "No unauthorised fallback" (removed selected key, quota on org key, key rejected at use time) |
+| Tenant A never uses Tenant B's key | `ai-access` "tenant A's key is never used for, or visible to, tenant B"; forged org header |
+| Gemini configuration, connection failures, quota errors | `ai-providers` unit tests on the official SDK with stubbed HTTP: structured output, header-only key, 429 (no retry, no model switch), 5xx retry, auth failure, model checks, safety/truncation/invalid output |
+| Model restrictions and unsupported models | `ai-access` "Model restrictions"; `ai-providers` catalogue tests |
+| Concurrent jobs and credential rotation | `ai-access` limit of 3 under 8 concurrent requests (exactly 3 succeed), token limit, rotation versioning |
+| Background-worker tenant isolation and revocation | `ai-access` "revocation before a queued assessment starts stops it; the job never borrows another tenant's access" |
+| Secret redaction and access control | `ai-providers` scrubbing + logger redaction + SDK env-key fallback guard; `ai-access` encryption at rest, masked API output, `ai.manage` enforcement at service and route |
+
+Bug found and fixed by these tests: a queue retry of a failed assessment tried `FAILED → ASSESSED` (forbidden by the state machine); it now re-enters `PROCESSING` first.
+
+---
+
+## Initial build (2026-10-24)
+
 Results of checks **actually executed** in the build environment (Linux container, 4 vCPU, 15 GB RAM, Node 22.22, PostgreSQL 16 local, Redis 7 local) on 2026-10-24. All AI/speech providers were **fixture** providers. No real provider, email, storage or payment accounts were used.
 
 ## Summary

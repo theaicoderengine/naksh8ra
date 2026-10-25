@@ -13,6 +13,7 @@ Multi-tenant recruitment platform with AI-assisted interviews, a student career 
 | Assessment | Competency rubrics (versioned), evidence quotes verified verbatim against the transcript, explicit `INSUFFICIENT_EVIDENCE`, coverage metric, `REQUIRES_REVIEW` flags, human review & override with reasons. No single opaque score; no inference of protected characteristics |
 | Students | Profile (education, skills, projects, experience, preferences), resume upload & parsing (PDF/DOCX), explainable job discovery, saved jobs, applications with profile preview & consent, private practice interviews with coaching feedback, only employer-approved feedback visible |
 | Universities | Placement programmes, cohorts with consent-gated student visibility, employer partnerships, placement reporting |
+| AI providers | Platform AI denied by default and granted by super-admins per organisation, provider and capability (with limits); organisations can bring their own Gemini, OpenAI or Anthropic keys (encrypted, tested before activation, masked); one tenant-aware resolver with no silent fallback ([docs](docs/ai-providers.md)) |
 | Billing | Plans & entitlements, Stripe hosted checkout/billing portal, signature-verified idempotent webhooks, immutable credit ledger (reserve → consume/release), student practice credits, reconciliation |
 | Platform admin | Organisation management (suspend/verify/credit adjustments with reasons), plans, feature flags, health, support tickets, approval-based time-limited support access, privacy requests, audit, admin management. MFA mandatory |
 | Privacy | Consent records, data export, account deletion with erasure forwarding, retention policies with sweep job |
@@ -83,6 +84,7 @@ Starts Postgres (roles bootstrapped automatically), Redis, Mailpit (`:8025`), a 
 - [Privacy & retention](docs/privacy.md)
 - [Responsible AI & assessment](docs/responsible-ai.md)
 - [Billing & credits](docs/billing.md)
+- [AI provider access & BYOK](docs/ai-providers.md) — platform grants, organisation keys, Gemini, resolution rules
 - [Providers](docs/providers.md) — configuring AI, speech, email, storage, payments; current verification status
 - [Deployment](docs/deployment.md) — staging/production, domains, TLS, secrets
 - [Operations runbook](docs/operations.md) — monitoring, backups, recovery, incidents, rollback, release checklist

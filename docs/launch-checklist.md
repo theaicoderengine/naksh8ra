@@ -18,6 +18,11 @@ Tick every item with evidence (link, screenshot, ticket) before onboarding real 
 - [ ] First super admin created with MFA; `PLATFORM_ADMIN_EMAILS` cleared
 
 ## Providers (verify each on staging first)
+- [ ] Platform AI grants reviewed: no organisation has platform AI it should not; limits set; personal-account grants decided
+- [ ] Organisation BYOK verified on staging with real Gemini, OpenAI and Anthropic keys: connect, test, rotate, remove; bad key rejected
+- [ ] Gemini free-tier behaviour checked with a free-tier key: quota error message shown, no model switch; data-use terms communicated to customers
+- [ ] Supported model list (`AI_MODEL_CATALOG_JSON`) reviewed against providers' current models and free-tier status
+- [ ] `ENCRYPTION_KEY` rotation plan (re-encryption) documented before any organisation stores keys
 - [ ] LLM: real interviews end-to-end; assessments reviewed by HR against rubrics; latency acceptable
 - [ ] STT: accuracy checked on varied accents / audio quality
 - [ ] TTS: voice acceptable or browser speech chosen deliberately
