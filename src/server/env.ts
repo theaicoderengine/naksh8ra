@@ -21,6 +21,9 @@ const schema = z.object({
 
   // 32-byte key, base64. Encrypts MFA secrets and integration secrets at rest.
   ENCRYPTION_KEY: z.string().optional(),
+  // Only during a key rotation: the old key, accepted for decryption until
+  // `npm run secrets:reencrypt -- --apply` has moved every secret to ENCRYPTION_KEY.
+  ENCRYPTION_KEY_PREVIOUS: z.string().optional(),
   SESSION_TTL_HOURS: z.coerce.number().default(24 * 7),
   PRIVILEGED_SESSION_TTL_HOURS: z.coerce.number().default(12),
 
@@ -106,9 +109,13 @@ export function env(): Env {
   if (ambient.length) throw new Error(`Unsupported AI SDK environment variables are set: ${ambient.join(", ")}. Remove them.`);
   if (e.APP_ENV === "production" || e.APP_ENV === "staging") {
     if (!e.ENCRYPTION_KEY) throw new Error("ENCRYPTION_KEY is required outside development");
-    if (e.ALLOW_FIXTURE_PROVIDERS && e.APP_ENV === "production") {
-      throw new Error("ALLOW_FIXTURE_PROVIDERS must not be enabled in production");
-    }
+  }
+  for (const [name, v] of [["ENCRYPTION_KEY", e.ENCRYPTION_KEY], ["ENCRYPTION_KEY_PREVIOUS", e.ENCRYPTION_KEY_PREVIOUS]] as const) {
+    if (v && Buffer.from(v, "base64").length !== 32) throw new Error(`${name} must be 32 random bytes, base64-encoded`);
+  }
+  if (e.ENCRYPTION_KEY_PREVIOUS && e.ENCRYPTION_KEY_PREVIOUS === e.ENCRYPTION_KEY) throw new Error("ENCRYPTION_KEY_PREVIOUS must differ from ENCRYPTION_KEY");
+  if (e.ALLOW_FIXTURE_PROVIDERS && e.APP_ENV === "production") {
+    throw new Error("ALLOW_FIXTURE_PROVIDERS must not be enabled in production");
   }
   cached = e;
   return e;

@@ -302,12 +302,24 @@ describe("Concurrency, limits and credential rotation", () => {
     const held = await Promise.allSettled(Array.from({ length: 8 }, () => _test.reservePlatform(scope, { provider: "FIXTURE", capability: "JOB_DRAFTING", model: "fixture-llm-v1" }, E)));
     const ok = held.filter((r): r is PromiseFulfilledResult<{ id: string; tokens: number }> => r.status === "fulfilled");
     expect(ok).toHaveLength(3);
-    expect(held.filter((r) => r.status === "rejected").every((r) => (r as PromiseRejectedResult).reason.code === "AI_LIMIT_REACHED")).toBe(true);
+    expect(held.filter((r) => r.status === "rejected").map((r) => `${(r as PromiseRejectedResult).reason.code ?? ""} ${(r as PromiseRejectedResult).reason.code ? "" : String((r as PromiseRejectedResult).reason.message).slice(0, 300)}`.trim())).toEqual(Array(5).fill("AI_LIMIT_REACHED"));
     expect(await counter(org.id)).toMatchObject({ requests: 3, tokensReserved: 3 * E, tokens: 0 });
     // Settling releases the unused part of each reservation.
     for (const r of ok) await _test.settleReservation(r.value, 150);
     expect(await counter(org.id)).toMatchObject({ tokensReserved: 0, tokens: 450 });
   });
+
+  it("first-of-month counter creation under concurrency never errors (regression: 23505 race)", async () => {
+    for (let round = 0; round < 15; round++) {
+      const { org } = await makeOrg();
+      const E = estimateReservationTokens("FIXTURE", "json", jsonReq);
+      await grantPlatformAi(org.id, ["JOB_DRAFTING"], { monthlyTokenLimit: 3 * E + 10 });
+      const scope = { kind: "ORG" as const, organisationId: org.id };
+      const held = await Promise.allSettled(Array.from({ length: 8 }, () => _test.reservePlatform(scope, { provider: "FIXTURE", capability: "JOB_DRAFTING", model: "fixture-llm-v1" }, E)));
+      expect(held.filter((h) => h.status === "fulfilled")).toHaveLength(3);
+      expect(held.filter((h) => h.status === "rejected").map((h) => (h as PromiseRejectedResult).reason.code)).toEqual(Array(5).fill("AI_LIMIT_REACHED"));
+    }
+  }, 60_000);
 
   it("end to end under concurrency, settled + reserved usage never exceeds the limit", async () => {
     const { org } = await makeOrg();
@@ -503,5 +515,52 @@ describe("Security review regressions", () => {
     const admin = await makeUser({ platformRole: "SUPER_ADMIN" });
     await getOrgAiAccess(await sessionFor(admin.id, true), org.id, meta);
     expect(await prisma.auditEvent.count({ where: { organisationId: org.id, action: "platform.ai_access_viewed", actorUserId: admin.id } })).toBe(1);
+  });
+});
+
+describe("Encryption key rotation (no stored organisation key is lost)", () => {
+  it("dual-key decryption + re-encryption moves every secret to the new key, then the old key can be removed", async () => {
+    const crypto = await import("node:crypto");
+    const { reencryptSecrets } = await import("@/server/security/reencrypt");
+    const { decryptWithInfo } = await import("@/server/auth/crypto");
+    const devKey = crypto.createHash("sha256").update("atlas-dev-only-key").digest().toString("base64"); // tests run on the dev key
+    const newKey = crypto.randomBytes(32).toString("base64");
+    const saved = { cur: process.env.ENCRYPTION_KEY, prev: process.env.ENCRYPTION_KEY_PREVIOUS };
+    const { org, ctx } = await makeOrg();
+    await saveOrgCredential(ctx, "FIXTURE", FIXTURE_KEY, meta);
+    // The shared test DB holds deliberately corrupted ciphertexts from other tests; the job
+    // must report those (and only those) as undecryptable.
+    const baseline = new Set(Object.values((await reencryptSecrets(false)).tables).flatMap((s) => s.undecryptable));
+    const onlyBaseline = (r: Awaited<ReturnType<typeof reencryptSecrets>>) => {
+      for (const s of Object.values(r.tables)) expect(s.undecryptable.filter((id) => !baseline.has(id))).toEqual([]);
+    };
+    try {
+      // Step 1: deploy with the new key, old key as PREVIOUS — everything still decrypts.
+      process.env.ENCRYPTION_KEY = newKey;
+      process.env.ENCRYPTION_KEY_PREVIOUS = devKey;
+      expect((await draftJobDescription(ctx, draft)).aiSource).toBe("ORGANISATION");
+      const dry = await reencryptSecrets(false);
+      expect(dry.tables["OrgAiCredential.encryptedKey"].reencrypted).toBeGreaterThan(0);
+      const row0 = await withOrg(org.id, null, (tx) => tx.orgAiCredential.findFirstOrThrow());
+      expect(decryptWithInfo(row0.encryptedKey).keyUsed).toBe("previous"); // dry run wrote nothing
+      // Step 2: re-encrypt.
+      onlyBaseline(await reencryptSecrets(true));
+      expect((await reencryptSecrets(false)).tables["OrgAiCredential.encryptedKey"].reencrypted).toBe(0); // idempotent
+      // Step 3: remove the old key — keys and MFA secrets still work.
+      delete process.env.ENCRYPTION_KEY_PREVIOUS;
+      expect((await draftJobDescription(ctx, draft)).aiSource).toBe("ORGANISATION");
+      const row = await withOrg(org.id, null, (tx) => tx.orgAiCredential.findFirstOrThrow());
+      expect(decryptWithInfo(row.encryptedKey)).toEqual({ plain: "fixture-ok", keyUsed: "current" });
+    } finally {
+      // Rotate the shared test database back to the dev key the same way.
+      process.env.ENCRYPTION_KEY = devKey;
+      process.env.ENCRYPTION_KEY_PREVIOUS = newKey;
+      onlyBaseline(await reencryptSecrets(true));
+      if (saved.cur === undefined) delete process.env.ENCRYPTION_KEY;
+      else process.env.ENCRYPTION_KEY = saved.cur;
+      if (saved.prev === undefined) delete process.env.ENCRYPTION_KEY_PREVIOUS;
+      else process.env.ENCRYPTION_KEY_PREVIOUS = saved.prev;
+    }
+    expect((await draftJobDescription(ctx, draft)).aiSource).toBe("ORGANISATION");
   });
 });

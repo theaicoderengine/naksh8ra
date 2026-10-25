@@ -120,10 +120,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Reports known advisories in production dependencies. Some remaining
-      # advisories need major upgrades (see docs/known-limitations.md); the
-      # job fails only on critical findings until those upgrades land.
-      - run: npm audit --omit=dev --audit-level=critical
+      # All dependencies (incl. dev/build tooling). Fails on high or critical advisories;
+      # transitive pins live in package.json "overrides".
+      - run: npm audit --audit-level=high
 
   container:
     runs-on: ubuntu-latest

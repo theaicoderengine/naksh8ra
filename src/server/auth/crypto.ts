@@ -42,6 +42,12 @@ export function sha256(value: string | Buffer): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
+function parseKey(k: string, name: string): Buffer {
+  const buf = Buffer.from(k, "base64");
+  if (buf.length !== 32) throw new Error(`${name} must be 32 bytes base64`);
+  return buf;
+}
+
 function key(): Buffer {
   const k = process.env.ENCRYPTION_KEY;
   if (!k) {
@@ -51,12 +57,16 @@ function key(): Buffer {
     // Development-only deterministic key; never used outside dev/test (env.ts enforces).
     return crypto.createHash("sha256").update("atlas-dev-only-key").digest();
   }
-  const buf = Buffer.from(k, "base64");
-  if (buf.length !== 32) throw new Error("ENCRYPTION_KEY must be 32 bytes base64");
-  return buf;
+  return parseKey(k, "ENCRYPTION_KEY");
 }
 
-/** AES-256-GCM authenticated encryption for secrets at rest. */
+/** Key being rotated out: still accepted for decryption until re-encryption completes. */
+function previousKey(): Buffer | null {
+  const k = process.env.ENCRYPTION_KEY_PREVIOUS;
+  return k ? parseKey(k, "ENCRYPTION_KEY_PREVIOUS") : null;
+}
+
+/** AES-256-GCM authenticated encryption for secrets at rest (always with the current key). */
 export function encrypt(plain: string): string {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key(), iv);
@@ -65,12 +75,31 @@ export function encrypt(plain: string): string {
   return `v1.${iv.toString("base64url")}.${tag.toString("base64url")}.${ct.toString("base64url")}`;
 }
 
-export function decrypt(payload: string): string {
+function decryptWith(k: Buffer, payload: string): string {
   const [v, ivB, tagB, ctB] = payload.split(".");
-  if (v !== "v1") throw new Error("Unsupported ciphertext version");
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key(), Buffer.from(ivB, "base64url"));
+  if (v !== "v1" || !ivB || !tagB || ctB === undefined) throw new Error("Unsupported ciphertext version");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", k, Buffer.from(ivB, "base64url"));
   decipher.setAuthTag(Buffer.from(tagB, "base64url"));
   return Buffer.concat([decipher.update(Buffer.from(ctB, "base64url")), decipher.final()]).toString("utf8");
+}
+
+/**
+ * Decrypt with the current key, falling back to ENCRYPTION_KEY_PREVIOUS during a key
+ * rotation (GCM authentication tells us which key the ciphertext was made with).
+ * `keyUsed` lets the re-encryption job find secrets still on the old key.
+ */
+export function decryptWithInfo(payload: string): { plain: string; keyUsed: "current" | "previous" } {
+  try {
+    return { plain: decryptWith(key(), payload), keyUsed: "current" };
+  } catch (err) {
+    const prev = previousKey();
+    if (!prev) throw err;
+    return { plain: decryptWith(prev, payload), keyUsed: "previous" };
+  }
+}
+
+export function decrypt(payload: string): string {
+  return decryptWithInfo(payload).plain;
 }
 
 export function hmac(secret: string, data: string): string {

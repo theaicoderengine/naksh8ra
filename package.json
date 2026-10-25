@@ -22,7 +22,9 @@
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
     "openapi": "tsx scripts/generate-openapi.ts",
-    "perf": "tsx scripts/perf/api-load.ts"
+    "perf": "tsx scripts/perf/api-load.ts",
+    "secrets:reencrypt": "tsx scripts/secrets-reencrypt.ts",
+    "db:verify-ai-access": "tsx scripts/db/verify-ai-access.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

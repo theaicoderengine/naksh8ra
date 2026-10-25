@@ -203,10 +203,12 @@ async function reservePlatform(scope: AiScope, r: { provider: AiProvider; capabi
       const permitted = g[0].allowedModels.length ? g[0].allowedModels.includes(r.model) : [deploymentDefaultModel(r.provider, false), deploymentDefaultModel(r.provider, true)].includes(r.model);
       if (!permitted) throw new AppError("AI_ACCESS_DENIED", `The model "${r.model}" is no longer permitted for platform AI on this organisation.`, { reason: "model_not_permitted" });
     }
+    // No conflict target: concurrent first-of-month inserts race on the unique keys and
+    // must be absorbed (a targeted ON CONFLICT still raised 23505 on the primary key).
     await tx.$executeRaw`
       INSERT INTO "AiUsageCounter" (id, subject, provider, capability, period, requests, tokens, "tokensReserved", "updatedAt")
-      VALUES (${`auc_${subject}_${r.provider}_${r.capability}_${per}`.slice(0, 190)}, ${subject}, ${r.provider}::"AiProvider", ${r.capability}::"AiCapability", ${per}, 0, 0, 0, now())
-      ON CONFLICT (subject, provider, capability, period) DO NOTHING`;
+      VALUES (${createId()}, ${subject}, ${r.provider}::"AiProvider", ${r.capability}::"AiCapability", ${per}, 0, 0, 0, now())
+      ON CONFLICT DO NOTHING`;
     const n = await tx.$executeRaw`
       UPDATE "AiUsageCounter" SET requests = requests + 1, "tokensReserved" = "tokensReserved" + ${estimate}, "updatedAt" = now()
       WHERE subject = ${subject} AND provider = ${r.provider}::"AiProvider" AND capability = ${r.capability}::"AiCapability" AND period = ${per}
