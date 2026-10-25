@@ -16,7 +16,7 @@ export const programmeSchema = z.object({
   name: z.string().trim().min(2).max(160),
   description: z.string().trim().max(4000).nullable().optional(),
   academicYear: z.string().trim().max(20).nullable().optional(),
-  eligibility: z.object({ graduationYears: z.array(z.number().int()).max(10).default([]), degrees: z.array(z.string().max(120)).max(20).default([]) }).default({}),
+  eligibility: z.object({ graduationYears: z.array(z.number().int()).max(10).default([]), degrees: z.array(z.string().max(120)).max(20).default([]) }).prefault({}),
   isActive: z.boolean().default(true),
 });
 

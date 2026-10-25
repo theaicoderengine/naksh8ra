@@ -395,7 +395,7 @@ export const applySchema = z.object({
   resumeVersionId: z.string().nullable().optional(),
   coverLetter: z.string().trim().max(8000).optional(),
   screeningAnswers: z.array(z.object({ id: z.string().max(40), answer: z.string().trim().max(4000) })).max(20).default([]),
-  consentToShare: z.literal(true, { errorMap: () => ({ message: "Confirm you agree to share the previewed information" }) }),
+  consentToShare: z.literal(true, { error: "Confirm you agree to share the previewed information" }),
   saveAsDraft: z.boolean().default(false),
 });
 

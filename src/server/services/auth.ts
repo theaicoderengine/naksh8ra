@@ -24,7 +24,7 @@ export const registerSchema = z.object({
   firstName: z.string().trim().min(1).max(80),
   lastName: z.string().trim().min(1).max(80),
   intent: z.enum(["EMPLOYER", "STUDENT", "UNIVERSITY", "CANDIDATE"]),
-  acceptTerms: z.literal(true, { errorMap: () => ({ message: "You must accept the terms and privacy notice" }) }),
+  acceptTerms: z.literal(true, { error: "You must accept the terms and privacy notice" }),
   marketingOptIn: z.boolean().optional(),
   companyName: z.string().trim().max(160).optional(),
 });

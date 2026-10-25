@@ -26,7 +26,7 @@ export const createOrgSchema = z.object({
   country: z.string().trim().length(2).toUpperCase().optional(),
   timezone: z.string().trim().max(60).default("UTC"),
   planKey: z.string().max(60).optional(),
-  acceptTerms: z.literal(true, { errorMap: () => ({ message: "You must accept the customer terms" }) }),
+  acceptTerms: z.literal(true, { error: "You must accept the customer terms" }),
 });
 
 async function uniqueSlug(name: string) {

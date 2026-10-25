@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import { registerSchema } from "./services/auth";
 import { createOrgSchema, updateOrgSchema, inviteSchema as memberInviteSchema } from "./services/organisations";
 import { jobInputSchema, jobPatchSchema, jobListQuery, discoverQuery, assignmentSchema, jdDraftSchema } from "./services/jobs";
@@ -17,7 +16,7 @@ import { grantsSchema as aiGrantsSchema } from "./services/ai-admin";
 import { orgActionSchema, creditAdjustSchema, planSchema, packSchema, flagSchema, adminRoleSchema, ticketSchema, orgQuery, auditQuery } from "./services/platform";
 
 type Auth = "public" | "session" | "verified" | "org" | "platform" | "interview" | "signature";
-type Ep = { method: "get" | "post" | "patch" | "put" | "delete"; path: string; tag: string; summary: string; auth: Auth; body?: z.ZodTypeAny; query?: z.ZodTypeAny; permission?: string; multipart?: string[]; produces?: string };
+type Ep = { method: "get" | "post" | "patch" | "put" | "delete"; path: string; tag: string; summary: string; auth: Auth; body?: z.ZodType; query?: z.ZodType; permission?: string; multipart?: string[]; produces?: string };
 
 const E = (method: Ep["method"], path: string, tag: string, summary: string, auth: Auth, extra: Partial<Ep> = {}): Ep => ({ method, path, tag, summary, auth, ...extra });
 const tok = z.object({ token: z.string() });
@@ -106,7 +105,7 @@ export const ENDPOINTS: Ep[] = [
 
   E("get", "/interview-session/state", "Candidate interview", "Candidate-safe interview state", "interview"),
   E("post", "/interview-session/consent", "Candidate interview", "Record notice acknowledgement & consents", "interview", { body: consentSchema }),
-  E("post", "/interview-session/event", "Candidate interview", "Client events (mic check, disconnect, reconnect)", "interview", { body: z.object({ type: z.string(), data: z.record(z.unknown()).optional(), idempotencyKey: z.string().optional() }) }),
+  E("post", "/interview-session/event", "Candidate interview", "Client events (mic check, disconnect, reconnect)", "interview", { body: z.object({ type: z.string(), data: z.record(z.string(), z.unknown()).optional(), idempotencyKey: z.string().optional() }) }),
   E("post", "/interview-session/start", "Candidate interview", "Start or resume the interview", "interview"),
   E("post", "/interview-session/answer", "Candidate interview", "Structured mode: submit an answer (audio or typed)", "interview", { multipart: ["position", "file", "text", "durationMs", "retake", "idempotencyKey"] }),
   E("post", "/interview-session/turn", "Candidate interview", "Conversational mode: submit a turn, receive interviewer reply (+audio)", "interview", { multipart: ["file", "text", "durationMs"] }),
@@ -235,8 +234,9 @@ const SECURITY: Record<Auth, unknown[]> = {
   signature: [],
 };
 
-function js(schema: z.ZodTypeAny) {
-  const out = zodToJsonSchema(schema, { target: "openApi3", $refStrategy: "none" }) as Record<string, unknown>;
+function js(schema: z.ZodType) {
+  // Request schemas describe what clients send (input side: defaults optional, coercions accept input types).
+  const out = z.toJSONSchema(schema, { target: "openapi-3.0", io: "input", unrepresentable: "any" }) as Record<string, unknown>;
   delete out.$schema;
   return out;
 }

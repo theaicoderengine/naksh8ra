@@ -100,7 +100,7 @@ export const templateSchema = z
     allowResume: z.boolean().default(true),
     voice: z.string().max(60).nullable().optional(),
     candidateInstructions: z.string().trim().max(4000).nullable().optional(),
-    accessibilityOptions: z.object({ allowTypedAnswers: z.boolean().default(true), extendedTimeMultiplier: z.number().min(1).max(3).default(1), captions: z.boolean().default(true) }).default({}),
+    accessibilityOptions: z.object({ allowTypedAnswers: z.boolean().default(true), extendedTimeMultiplier: z.number().min(1).max(3).default(1), captions: z.boolean().default(true) }).prefault({}),
     competencyIds: z.array(z.string()).min(1, "Select at least one competency").max(12),
     questions: z.array(questionInput).max(30).default([]),
   })

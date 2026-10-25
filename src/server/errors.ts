@@ -78,7 +78,7 @@ export function toErrorBody(err: unknown, requestId?: string): { status: number;
         error: {
           code: "VALIDATION_FAILED",
           message: "Request validation failed",
-          details: err.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+          details: err.issues.map((i) => ({ path: i.path.map(String).join("."), message: i.message })),
           requestId,
         },
       },

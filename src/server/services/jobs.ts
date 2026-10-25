@@ -54,7 +54,7 @@ export type JobInput = z.infer<typeof jobInputSchema>;
 
 /** Partial update: same field rules; defaults are not applied so omitted fields stay unchanged. */
 export const jobPatchSchema = z
-  .object(Object.fromEntries(Object.entries(jobBaseSchema.shape).map(([k, v]) => [k, (v instanceof z.ZodDefault ? v._def.innerType : v).optional()])) as { [K in keyof typeof jobBaseSchema.shape]: z.ZodOptional<z.ZodTypeAny> })
+  .object(Object.fromEntries(Object.entries(jobBaseSchema.shape).map(([k, v]) => [k, (v instanceof z.ZodDefault ? (v.unwrap() as z.ZodType) : (v as z.ZodType)).optional()])) as unknown as { [K in keyof typeof jobBaseSchema.shape]: z.ZodOptional<z.ZodType> })
   .refine((j) => j.salaryMin == null || j.salaryMax == null || (j.salaryMin as number) <= (j.salaryMax as number), { message: "Minimum salary must not exceed maximum", path: ["salaryMin"] });
 
 async function validateRefs(tx: Tx, orgId: string, input: Partial<JobInput>) {

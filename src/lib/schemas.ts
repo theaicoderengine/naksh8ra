@@ -12,7 +12,7 @@ export const registerForm = z.object({
   email: z.string().trim().email("Enter a valid email"),
   password,
   companyName: z.string().trim().max(160).optional(),
-  acceptTerms: z.literal(true, { errorMap: () => ({ message: "Please accept the terms and privacy notice" }) }),
+  acceptTerms: z.literal(true, { error: "Please accept the terms and privacy notice" }),
   marketingOptIn: z.boolean().optional(),
 });
 
