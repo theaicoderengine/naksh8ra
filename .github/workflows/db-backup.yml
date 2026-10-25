@@ -1,0 +1,43 @@
+# Nightly logical backup of the production database to S3-compatible storage, independent of
+# the database provider's own backups/PITR. Encrypted (AES-256, PBKDF2) before upload.
+# Runs only when the repository variable BACKUP_ENABLED is "true" — otherwise the job is
+# shown as skipped, never as a successful backup. Setup: docs/deployment-hostinger.md#backups
+name: Database backup
+on:
+  schedule:
+    - cron: "17 2 * * *" # 02:17 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    if: ${{ vars.BACKUP_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: production-backup
+    timeout-minutes: 60
+    steps:
+      - name: Dump, encrypt and upload
+        env:
+          # Owner role over the DIRECT (non-pooled) endpoint; pg_dump needs a session connection.
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_S3_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ vars.BACKUP_S3_REGION || 'auto' }}
+          BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
+          ENDPOINT: ${{ vars.BACKUP_S3_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          for v in DATABASE_URL PASSPHRASE AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY BUCKET; do
+            [ -n "${!v}" ] || { echo "::error::$v is not configured"; exit 1; }
+          done
+          name="atlas-$(date -u +%Y%m%dT%H%M%SZ).dump.enc"
+          # pg_dump 17 can dump PostgreSQL 16 and 17 servers.
+          docker run --rm -e DATABASE_URL postgres:17 sh -c 'pg_dump --format=custom --no-owner "$DATABASE_URL"' \
+            | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:PASSPHRASE > "$name"
+          size=$(stat -c %s "$name")
+          [ "$size" -gt 1024 ] || { echo "::error::backup is suspiciously small ($size bytes)"; exit 1; }
+          aws s3 cp "$name" "s3://$BUCKET/db/$name" ${ENDPOINT:+--endpoint-url "$ENDPOINT"} --only-show-errors
+          echo "Uploaded db/$name ($size bytes)" >> "$GITHUB_STEP_SUMMARY"

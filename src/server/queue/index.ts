@@ -2,6 +2,7 @@ import { Queue, type JobsOptions } from "bullmq";
 import { newRedisConnection } from "./redis";
 import { prisma } from "../db/client";
 import { logger } from "../logger";
+import { env } from "../env";
 
 /**
  * Background jobs. Every payload that touches tenant data carries
@@ -33,8 +34,16 @@ function getQueue() {
   return queue;
 }
 
-export function queueMode(): "redis" | "inline" {
-  return process.env.QUEUE_MODE === "inline" || !process.env.REDIS_URL ? "inline" : "redis";
+/**
+ * redis    — BullMQ + `npm run worker` (container platforms)
+ * postgres — durable JobRun rows processed in the web process + cron tick (Hostinger; see ./pg.ts)
+ * inline   — run inside the request (tests / local dev only; refused in staging and production)
+ */
+export function queueMode(): "redis" | "postgres" | "inline" {
+  const mode = process.env.QUEUE_MODE;
+  if (mode === "postgres") return "postgres";
+  if (mode === "inline" || !process.env.REDIS_URL) return "inline";
+  return "redis";
 }
 
 /** Track runs for the platform "failed jobs" view. */
@@ -52,7 +61,15 @@ export async function recordJob(name: string, status: string, data: { organisati
 
 export async function enqueue<N extends JobName>(name: N, payload: JobPayloads[N], opts: JobsOptions = {}) {
   const organisationId = (payload as { organisationId?: string }).organisationId;
-  if (queueMode() === "inline") {
+  const mode = queueMode();
+  if (mode === "postgres") {
+    const { pgEnqueue } = await import("./pg");
+    await pgEnqueue(name, payload, { delayMs: typeof opts.delay === "number" ? opts.delay : undefined, maxAttempts: opts.attempts });
+    const { kickRunner } = await import("./runner");
+    kickRunner(env().JOB_CONCURRENCY);
+    return;
+  }
+  if (mode === "inline") {
     // Inline mode (tests / single-process dev): run now, but never let a job
     // failure break the request that scheduled it — mirror queue semantics.
     const runId = await recordJob(name, "RUNNING", { organisationId, payload });

@@ -1,7 +1,8 @@
+# OPTIONAL AWS deployment (infra/aws). NOT used by the Hostinger deployment (docs/deployment-hostinger.md).
 # Manual deployment. Staging always first; production only after staging passes AND a
 # required reviewer approves the "production" GitHub Environment.
 # Setup (once per environment): docs/deployment-aws.md
-name: Deploy
+name: Deploy to AWS (optional)
 on:
   workflow_dispatch:
     inputs:

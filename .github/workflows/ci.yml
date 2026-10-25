@@ -97,8 +97,11 @@ jobs:
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
+      # Background jobs through the durable Postgres queue + in-process runner (the Hostinger path).
       - name: E2E (Playwright)
         run: npm run test:e2e
+        env:
+          QUEUE_MODE: postgres
 
       - name: Load test (smoke-sized)
         run: |
@@ -112,6 +115,57 @@ jobs:
           name: playwright-traces
           path: test-results/
           retention-days: 7
+
+  # Full Hostinger deployment rehearsal: production-mode env from .env.hostinger.example,
+  # DEPLOY_TARGET=hostinger build (preflight → build → migrate → seed → verify), npm start,
+  # live verification, and a real job through the Postgres queue. Plus the role bootstrap
+  # as a non-superuser admin, as on managed PostgreSQL services.
+  hostinger-rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - name: Role bootstrap as a non-superuser admin (managed PostgreSQL)
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE managed_admin LOGIN CREATEDB CREATEROLE PASSWORD 'managed_ci'"
+          sed -e 's/atlas_owner/m_owner/g' -e 's/atlas_app/m_app/g' scripts/db/bootstrap-roles.sql > /tmp/boot.sql
+          for i in 1 2; do
+            PGPASSWORD=managed_ci psql -h localhost -U managed_admin -d postgres -v ON_ERROR_STOP=1 \
+              -v owner_password="'m_owner_ci'" -v app_password="'m_app_ci'" -v db_name=managed_check -f /tmp/boot.sql
+          done
+          test "$(PGPASSWORD=m_app_ci psql -h localhost -U m_app -d managed_check -tAc 'SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user')" = "f"
+      - name: Bootstrap database roles
+        run: |
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
+            -v owner_password="'atlas_owner_dev'" -v app_password="'atlas_app_dev'" -v db_name=atlas_hostinger \
+            -f scripts/db/bootstrap-roles.sql
+      - name: Local S3 API and SMTP sink (throwaway)
+        run: |
+          python3 -m pip install --quiet "moto[server]==5.1.4" "aiosmtpd==1.4.6"
+          (python3 -m moto.server -p 5005 > /tmp/moto.log 2>&1 &)
+          (python3 -m aiosmtpd -n -l 127.0.0.1:2525 -c aiosmtpd.handlers.Debugging > /tmp/smtp.log 2>&1 &)
+          for i in $(seq 1 30); do curl -s http://127.0.0.1:5005 >/dev/null && break; sleep 1; done
+          node -e 'const {S3Client,CreateBucketCommand}=require("@aws-sdk/client-s3");new S3Client({region:"us-east-1",endpoint:"http://127.0.0.1:5005",forcePathStyle:true,credentials:{accessKeyId:"test",secretAccessKey:"test"}}).send(new CreateBucketCommand({Bucket:"atlas-files"})).then(()=>console.log("bucket ready"))'
+      - name: Rehearse Hostinger deployment
+        run: scripts/hostinger/rehearse.sh
+        env:
+          SMTP_LOG: /tmp/smtp.log
 
   audit:
     runs-on: ubuntu-latest

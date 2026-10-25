@@ -1,5 +1,25 @@
 # Test results
 
+## Update 2026-10-25 — Hostinger deployment path
+
+Produced in this environment on the final tree, with fixture AI providers and local stand-ins for the external services. **Nothing was deployed to Hostinger, and no managed PostgreSQL, R2, live email, Stripe or AI provider was used.**
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck / lint | `tsc --noEmit`, `next lint` | ✅ 0 errors (1 pre-existing `<img>` warning) |
+| Unit + integration | `vitest run` | ✅ 17 files, **189 / 189** (new: Postgres queue, cron tick, production guards, request deadline, client IP) |
+| Same suite on a "managed-style" database | bootstrap as a non-superuser CREATEROLE/CREATEDB admin; app URL with `pgbouncer=true&connection_limit=5` | ✅ 189 / 189 (direct PostgreSQL; not through a real PgBouncer) |
+| Browser E2E with `QUEUE_MODE=postgres` | `playwright test` | ✅ **9 / 9** (incl. interviews, assessments, cross-tenant isolation) |
+| Hostinger rehearsal | `scripts/hostinger/rehearse.sh` (env from `.env.hostinger.example`, APP_ENV=production) | ✅ preflight 11 checks (RLS-safe runtime role, both roles connect, S3 round trip on moto), build, 6 migrations on an empty DB, seed, AI-access 19/19, rebuild idempotent, `npm start`, verifier 7/7, registration email delivered by the in-process runner, all jobs COMPLETED, no error logs |
+| Role bootstrap (managed PostgreSQL) | `bootstrap-roles.sql` twice as a non-superuser admin | ✅ idempotent; app role not SUPERUSER/BYPASSRLS |
+| Backup / restore | `pg_dump -Fc --no-owner` → AES-256 (openssl, PBKDF2) → decrypt → `pg_restore` into a new DB | ✅ 50 RLS policies, 5 triggers, app-role grants and migration-status function restored |
+| Migration drift | `prisma migrate diff … --exit-code` | ✅ none (7 migrations) |
+| Dependency audit | `npm audit --audit-level=high` | ✅ 0 vulnerabilities |
+
+Fixes found while testing: audio recordings were redirected to the object store, which the CSP's `media-src 'self'` blocks (now streamed); the S3 SSE header broke R2-style stores (now `S3_SSE`); the client IP was taken from a client-forgeable `X-Forwarded-For` entry (now the proxy-appended one); `bootstrap-roles.sql` failed for non-superuser admins; practice feedback needed a manual refresh with an asynchronous queue (now polls).
+
+---
+
 ## Update 2026-10-25 (hardening pass) — security review, limits, dependencies, upgrade path
 
 All results below were produced in this environment on the final tree. Fixture providers only; **no live provider credentials were used** — see [staging-provider-test-matrix.md](staging-provider-test-matrix.md) (not run).

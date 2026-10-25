@@ -11,6 +11,14 @@ Tick every item with evidence (link, screenshot, ticket) before onboarding real 
 - [ ] TLS at edge, `APP_URL` = exact public origin, `TRUST_PROXY` set correctly
 - [ ] Restore drill completed once; RTO/RPO recorded
 
+## Hostinger (when deploying there — [deployment-hostinger.md](deployment-hostinger.md))
+- [ ] Build log ends with `✔ Hostinger build complete` (preflight, migrations, seed, AI-access verification passed)
+- [ ] hPanel cron job calls `/api/internal/jobs/tick` every minute; `/api/health/jobs` returns 200
+- [ ] `npm run hostinger:verify -- https://<domain> --cron-secret=…` passes on staging and production
+- [ ] Uptime monitors on `/api/ready` and `/api/health/jobs`
+- [ ] Malware scanning decision recorded (external clamd connected, or `ALLOW_UNSCANNED_UPLOADS=true` accepted)
+- [ ] Database PITR enabled; nightly backup workflow enabled; restore drill done
+
 ## Configuration & secrets
 - [ ] `APP_ENV=production`; `ALLOW_FIXTURE_PROVIDERS`, `SEED_DEMO`, `EXPOSE_TEST_TOKENS` unset/false
 - [ ] `ENCRYPTION_KEY` generated and backed up in the secret manager

@@ -17,7 +17,12 @@ const schema = z.object({
 
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().optional(),
-  QUEUE_MODE: z.enum(["redis", "inline"]).default("redis"),
+  QUEUE_MODE: z.enum(["redis", "postgres", "inline"]).default("redis"),
+  // Postgres queue: the web process works through jobs; an external cron calls
+  // /api/internal/jobs/tick with CRON_SECRET to wake an idle site and schedule recurring jobs.
+  JOB_RUNNER_IN_PROCESS: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  JOB_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(2),
+  CRON_SECRET: z.string().optional(),
 
   // 32-byte key, base64. Encrypts MFA secrets and integration secrets at rest.
   ENCRYPTION_KEY: z.string().optional(),
@@ -54,6 +59,9 @@ const schema = z.object({
   // Retries of transient provider errors (5xx/timeouts), each a separately reserved attempt.
   AI_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
   AI_RETRY_BASE_MS: z.coerce.number().int().min(0).max(60_000).default(1000),
+  // Total time an API request may spend, including provider calls and retries. Keep it below the
+  // host's request cut-off (Hostinger: 120 s). 0 disables (background jobs never have one).
+  REQUEST_DEADLINE_MS: z.coerce.number().int().min(0).default(100_000),
 
   // Storage
   STORAGE_PROVIDER: z.enum(["local", "s3"]).default("local"),
@@ -64,6 +72,14 @@ const schema = z.object({
   S3_ACCESS_KEY_ID: z.string().optional(),
   S3_SECRET_ACCESS_KEY: z.string().optional(),
   S3_FORCE_PATH_STYLE: bool,
+  // Server-side encryption header. "none" for S3-compatible stores that encrypt at rest by
+  // default and reject the header (e.g. Cloudflare R2).
+  S3_SSE: z.enum(["AES256", "none"]).default("AES256"),
+  // Production refuses local disk storage (redeploys and multiple nodes lose files) unless set.
+  ALLOW_LOCAL_STORAGE: bool,
+  // Production refuses MALWARE_SCANNER=none unless this explicit acknowledgement is set;
+  // uploads are then stored and shown as "not scanned".
+  ALLOW_UNSCANNED_UPLOADS: bool,
   MAX_UPLOAD_MB: z.coerce.number().default(10),
   MALWARE_SCANNER: z.enum(["clamav", "none"]).default("none"),
   CLAMAV_HOST: z.string().default("localhost"),
@@ -89,6 +105,8 @@ const schema = z.object({
   // Bootstrap
   PLATFORM_ADMIN_EMAILS: z.string().default(""),
   TRUST_PROXY: bool,
+  // Number of trusted proxies that append to X-Forwarded-For (see clientIp in http/route.ts).
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(1).max(5).default(1),
 });
 
 export type Env = z.infer<typeof schema>;
@@ -109,6 +127,22 @@ export function env(): Env {
   if (ambient.length) throw new Error(`Unsupported AI SDK environment variables are set: ${ambient.join(", ")}. Remove them.`);
   if (e.APP_ENV === "production" || e.APP_ENV === "staging") {
     if (!e.ENCRYPTION_KEY) throw new Error("ENCRYPTION_KEY is required outside development");
+    // Jobs must be durable and retried: never silently run them inside requests.
+    if (e.QUEUE_MODE === "inline") throw new Error("QUEUE_MODE=inline is for tests and local development; use postgres or redis");
+    if (e.QUEUE_MODE === "redis" && !e.REDIS_URL) throw new Error("QUEUE_MODE=redis requires REDIS_URL (or use QUEUE_MODE=postgres)");
+    if (e.QUEUE_MODE === "postgres" && (!e.CRON_SECRET || e.CRON_SECRET.length < 32)) {
+      throw new Error("QUEUE_MODE=postgres requires CRON_SECRET (at least 32 characters) for the scheduled job tick");
+    }
+  }
+  if (e.APP_ENV === "production") {
+    if (e.STORAGE_PROVIDER === "local" && !e.ALLOW_LOCAL_STORAGE) {
+      throw new Error("STORAGE_PROVIDER=local is not allowed in production (files are lost on redeploy); use s3, or set ALLOW_LOCAL_STORAGE=true for a single persistent server");
+    }
+    if (e.STORAGE_PROVIDER === "s3" && !e.S3_BUCKET) throw new Error("STORAGE_PROVIDER=s3 requires S3_BUCKET");
+    if (e.MALWARE_SCANNER === "none" && !e.ALLOW_UNSCANNED_UPLOADS) {
+      throw new Error("MALWARE_SCANNER=none in production requires ALLOW_UNSCANNED_UPLOADS=true (uploads are then labelled 'not scanned'), or configure clamav");
+    }
+    if (!e.APP_URL.startsWith("https://")) throw new Error("APP_URL must be the public https:// origin in production");
   }
   for (const [name, v] of [["ENCRYPTION_KEY", e.ENCRYPTION_KEY], ["ENCRYPTION_KEY_PREVIOUS", e.ENCRYPTION_KEY_PREVIOUS]] as const) {
     if (v && Buffer.from(v, "base64").length !== 32) throw new Error(`${name} must be 32 random bytes, base64-encoded`);

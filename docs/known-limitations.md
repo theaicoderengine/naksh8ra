@@ -26,6 +26,13 @@ This is a frank list of what is incomplete, unverified or simplified as of hando
 - A short (48-bit) SHA-256 fingerprint of each organisation key is shown to the organisation and platform admins for identification; it does not enable key recovery for high-entropy keys.
 - Platform deployments cannot route provider traffic through a proxy/gateway: SDK base-URL variables are deliberately ignored. Adding gateway support needs an explicit, platform-only configuration.
 
+## Hostinger deployment
+
+- **Rehearsed, not yet run on Hostinger.** CI and a local rehearsal (`scripts/hostinger/rehearse.sh`) ran the Hostinger build, start-up and checks against local PostgreSQL 16, an S3 API emulator (moto) and an SMTP sink. Not yet exercised: Hostinger's build environment, a managed PostgreSQL pooler (Prisma was tested with `pgbouncer=true` against direct PostgreSQL, not through PgBouncer), Cloudflare R2, the hPanel cron job and live email/Stripe/AI providers.
+- **No malware scanning** on web hosting (no ClamAV). Uploads are content-type checked and shown as "not scanned"; production requires `ALLOW_UNSCANNED_UPLOADS=true`. **Launch blocker** for large-scale public uploads unless an external clamd is connected.
+- Background jobs run inside the single web process. After an idle stop they resume on the next cron tick (≤ 1 min); an interrupted job restarts after its 10-minute lease.
+- API requests are capped at 100 s (`REQUEST_DEADLINE_MS`, below Hostinger's 120 s limit); an AI call that cannot finish in time fails with a retryable message.
+
 ## Product scope simplifications
 
 - **Conversational mode is turn-based, not full-duplex streaming.** Each candidate utterance is recorded (silence detection), uploaded, transcribed, answered by the LLM, then spoken. Expect a few seconds of latency per turn with real providers; barge-in (interrupting the interviewer) is not supported. A realtime WebRTC provider integration would need a new adapter with ephemeral client tokens.

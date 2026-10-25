@@ -4,11 +4,11 @@
   "private": true,
   "description": "Multi-tenant AI recruitment SaaS (working name: Atlas Hiring)",
   "engines": {
-    "node": ">=20.11"
+    "node": ">=20.11 <25"
   },
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
+    "build": "node scripts/build.mjs",
     "start": "next start",
     "worker": "SERVICE_NAME=atlas-worker tsx src/worker/index.ts",
     "lint": "next lint",
@@ -24,7 +24,11 @@
     "openapi": "tsx scripts/generate-openapi.ts",
     "perf": "tsx scripts/perf/api-load.ts",
     "secrets:reencrypt": "tsx scripts/secrets-reencrypt.ts",
-    "db:verify-ai-access": "tsx scripts/db/verify-ai-access.ts"
+    "db:verify-ai-access": "tsx scripts/db/verify-ai-access.ts",
+    "jobs:run": "tsx scripts/jobs-run.ts",
+    "hostinger:preflight": "tsx scripts/hostinger/preflight.ts",
+    "hostinger:verify": "node scripts/hostinger/verify-deployment.mjs",
+    "secrets:generate": "node scripts/hostinger/generate-secrets.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

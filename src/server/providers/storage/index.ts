@@ -58,7 +58,7 @@ class S3Storage implements StorageProvider {
     });
   }
   async put(key: string, body: Buffer, mime: string) {
-    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: mime, ServerSideEncryption: "AES256" }));
+    await this.client.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: body, ContentType: mime, ...(env().S3_SSE === "AES256" ? { ServerSideEncryption: "AES256" as const } : {}) }));
   }
   async get(key: string) {
     const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));

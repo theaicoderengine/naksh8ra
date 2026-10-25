@@ -8,6 +8,7 @@ import { adjust, balance } from "../billing/credits";
 import { deploymentAiStatus } from "../ai/access";
 import { speechStatus } from "../providers/speech";
 import { env } from "../env";
+import { jobHealth } from "../ops/status";
 import { getRedis } from "../queue/redis";
 import { enqueue, type JobName } from "../queue";
 import { retryFailedPaymentEvents } from "./billing";
@@ -207,12 +208,14 @@ export async function providerHealth() {
   const e = env();
   const [emailStats, queueBacklog] = await Promise.all([
     prisma.emailDelivery.groupBy({ by: ["status"], where: { createdAt: { gte: new Date(Date.now() - 7 * 86400_000) } }, _count: { _all: true } }),
-    prisma.jobRun.count({ where: { status: "QUEUED", createdAt: { lt: new Date(Date.now() - 10 * 60_000) } } }),
+    // Due for more than 10 minutes (a retry waiting for its backoff is not stale).
+    prisma.jobRun.count({ where: { status: "QUEUED", runAt: { lt: new Date(Date.now() - 10 * 60_000) } } }),
   ]);
+  const jobs = await jobHealth().catch(() => null);
   return {
     database: { ok: dbOk },
     redis: { configured: !!redis, ok: redisOk },
-    queue: { mode: e.QUEUE_MODE, staleQueued: queueBacklog },
+    queue: { mode: e.QUEUE_MODE, staleQueued: queueBacklog, healthy: jobs?.healthy ?? null, lastRunnerSeenSeconds: jobs?.lastRunnerSeenSeconds ?? null },
     llm: deploymentAiStatus(),
     speech: speechStatus(),
     email: { provider: e.EMAIL_PROVIDER, last7Days: emailStats },

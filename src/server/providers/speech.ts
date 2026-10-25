@@ -1,5 +1,6 @@
 import OpenAI, { toFile } from "openai";
 import { env } from "../env";
+import { attemptTimeoutMs, hasDeadline } from "../deadline";
 import { AppError } from "../errors";
 import { logger } from "../logger";
 import { recordUsage, type UsageCtx } from "./usage";
@@ -31,7 +32,7 @@ class OpenAiStt implements SttProvider {
         language: language.slice(0, 2),
         response_format: "verbose_json",
         timestamp_granularities: ["segment"],
-      })) as unknown as { text: string; duration?: number; segments?: { start: number; end: number; text: string }[] };
+      }, { timeout: attemptTimeoutMs(env().AI_TIMEOUT_MS), maxRetries: hasDeadline() ? 0 : 2 })) as unknown as { text: string; duration?: number; segments?: { start: number; end: number; text: string }[] };
       const durationMs = res.duration ? Math.round(res.duration * 1000) : null;
       await recordUsage({ ...usage, kind: "STT", provider: this.name, model: env().OPENAI_STT_MODEL, units: (durationMs ?? 0) / 1000, unitLabel: "seconds" });
       return {
@@ -56,7 +57,7 @@ class DeepgramStt implements SttProvider {
       method: "POST",
       headers: { authorization: `Token ${env().DEEPGRAM_API_KEY}`, "content-type": mime },
       body: new Uint8Array(audio),
-      signal: AbortSignal.timeout(env().AI_TIMEOUT_MS),
+      signal: AbortSignal.timeout(attemptTimeoutMs(env().AI_TIMEOUT_MS)),
     });
     if (!res.ok) throw new AppError("PROVIDER_ERROR", "Speech recognition is temporarily unavailable");
     const json = (await res.json()) as {
@@ -133,7 +134,7 @@ class OpenAiTts implements TtsProvider {
   private client = new OpenAI({ apiKey: env().OPENAI_API_KEY, timeout: env().AI_TIMEOUT_MS, maxRetries: 2 });
   async synthesize(text: string, voice: string | null, usage: UsageCtx) {
     try {
-      const res = await this.client.audio.speech.create({ model: env().OPENAI_TTS_MODEL, voice: (voice ?? env().OPENAI_TTS_VOICE) as "alloy", input: text.slice(0, 4000), response_format: "mp3" });
+      const res = await this.client.audio.speech.create({ model: env().OPENAI_TTS_MODEL, voice: (voice ?? env().OPENAI_TTS_VOICE) as "alloy", input: text.slice(0, 4000), response_format: "mp3" }, { timeout: attemptTimeoutMs(env().AI_TIMEOUT_MS), maxRetries: hasDeadline() ? 0 : 2 });
       await recordUsage({ ...usage, kind: "TTS", provider: this.name, model: env().OPENAI_TTS_MODEL, units: text.length, unitLabel: "characters" });
       return { audio: Buffer.from(await res.arrayBuffer()), mime: "audio/mpeg" };
     } catch (err) {
@@ -152,7 +153,7 @@ class ElevenLabsTts implements TtsProvider {
       method: "POST",
       headers: { "xi-api-key": env().ELEVENLABS_API_KEY!, "content-type": "application/json", accept: "audio/mpeg" },
       body: JSON.stringify({ text: text.slice(0, 4000), model_id: "eleven_multilingual_v2" }),
-      signal: AbortSignal.timeout(env().AI_TIMEOUT_MS),
+      signal: AbortSignal.timeout(attemptTimeoutMs(env().AI_TIMEOUT_MS)),
     });
     if (!res.ok) throw new AppError("PROVIDER_ERROR", "Voice synthesis is temporarily unavailable");
     await recordUsage({ ...usage, kind: "TTS", provider: this.name, units: text.length, unitLabel: "characters" });

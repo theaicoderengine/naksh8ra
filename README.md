@@ -20,7 +20,7 @@ Multi-tenant recruitment platform with AI-assisted interviews, a student career 
 
 ## Stack
 
-Next.js 15 (App Router) · React 19 · TypeScript (strict) · Tailwind · React Hook Form + Zod · PostgreSQL 16 + Prisma (row-level security) · Redis + BullMQ worker · S3-compatible storage · pluggable AI/STT/TTS/email/payment adapters · Vitest · Playwright.
+Next.js 15 (App Router) · React 19 · TypeScript (strict) · Tailwind · React Hook Form + Zod · PostgreSQL 16 + Prisma (row-level security) · background jobs on Redis + BullMQ workers or a durable PostgreSQL queue · S3-compatible storage · pluggable AI/STT/TTS/email/payment adapters · Vitest · Playwright.
 
 Architecture: [docs/architecture.md](docs/architecture.md). API: `GET /api/v1/openapi.json` (also [docs/openapi.json](docs/openapi.json), rendered at `/docs/api`).
 
@@ -69,6 +69,9 @@ Starts Postgres (roles bootstrapped automatically), Redis, Mailpit (`:8025`), a 
 |---|---|
 | `npm run dev` / `build` / `start` | Next.js dev server / production build / serve build |
 | `npm run worker` | Background worker (BullMQ) with schedulers and health endpoint (`WORKER_HEALTH_PORT`) |
+| `npm run jobs:run` | Process the Postgres job queue once (SSH/cron; `QUEUE_MODE=postgres`) |
+| `npm run hostinger:verify -- <url>` | Post-deployment checks against a live URL |
+| `npm run secrets:generate` | Fresh ENCRYPTION_KEY / CRON_SECRET / webhook secret / DB passwords (new deployments only) |
 | `npm run db:migrate` | Apply migrations (`prisma migrate deploy`, uses `MIGRATION_DATABASE_URL`) |
 | `npm run db:seed` | System roles/permissions/defaults; `SEED_DEMO=true` adds demo data (refused in production) |
 | `npm run typecheck` / `lint` | TypeScript / ESLint |
@@ -86,8 +89,9 @@ Starts Postgres (roles bootstrapped automatically), Redis, Mailpit (`:8025`), a 
 - [Billing & credits](docs/billing.md)
 - [AI provider access & BYOK](docs/ai-providers.md) — platform grants, organisation keys, Gemini, resolution rules
 - [Providers](docs/providers.md) — configuring AI, speech, email, storage, payments; current verification status
-- [Deployment](docs/deployment.md) — staging/production, domains, TLS, secrets
-- [AWS deployment](docs/deployment-aws.md) — Terraform (ECS, RDS, ElastiCache, S3, ClamAV), bootstrap, gated deploy workflow
+- **[Hostinger deployment](docs/deployment-hostinger.md)** — production path: Node.js Web App, managed PostgreSQL, S3-compatible storage, Postgres job queue + cron tick, env template `.env.hostinger.example`
+- [Deployment](docs/deployment.md) — container platforms (web + worker + Redis), domains, TLS, secrets
+- [AWS deployment](docs/deployment-aws.md) (optional, not used for Hostinger) — Terraform (ECS, RDS, ElastiCache, S3, ClamAV), bootstrap, gated deploy workflow
 - [Operations runbook](docs/operations.md) — monitoring, backups, recovery, incidents, rollback, release checklist
 - [Launch checklist](docs/launch-checklist.md)
 - [Test results](docs/test-results.md) — what was actually run, and results

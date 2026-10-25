@@ -1,0 +1,35 @@
+# One-time, manual: create the database roles (atlas_owner, atlas_app) and database on a
+# managed PostgreSQL service, without installing psql locally. Idempotent; re-running only
+# resets the two role passwords to the values in the secrets. Uses the provider's admin URL.
+# docs/deployment-hostinger.md#2-database
+name: Database bootstrap (managed PostgreSQL)
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub environment holding the secrets
+        default: production
+      db_name:
+        description: Database name to create/use
+        default: atlas
+permissions:
+  contents: read
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run scripts/db/bootstrap-roles.sql
+        env:
+          ADMIN_DATABASE_URL: ${{ secrets.ADMIN_DATABASE_URL }}
+          OWNER_PW: ${{ secrets.ATLAS_OWNER_PASSWORD }}
+          APP_PW: ${{ secrets.ATLAS_APP_PASSWORD }}
+          DB_NAME: ${{ inputs.db_name }}
+        run: |
+          set -euo pipefail
+          for v in ADMIN_DATABASE_URL OWNER_PW APP_PW; do [ -n "${!v}" ] || { echo "::error::$v secret missing"; exit 1; }; done
+          case "$OWNER_PW$APP_PW" in *"'"*) echo "::error::passwords must not contain single quotes"; exit 1;; esac
+          docker run --rm -v "$PWD/scripts/db:/sql:ro" -e ADMIN_DATABASE_URL -e OWNER_PW -e APP_PW -e DB_NAME postgres:17 \
+            sh -c 'psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v owner_password="'"'"'$OWNER_PW'"'"'" -v app_password="'"'"'$APP_PW'"'"'" -v db_name="$DB_NAME" -f /sql/bootstrap-roles.sql'
+          echo "Roles ready. DATABASE_URL uses atlas_app (pooled endpoint); MIGRATION_DATABASE_URL uses atlas_owner (direct endpoint)." >> "$GITHUB_STEP_SUMMARY"

@@ -5,10 +5,14 @@ import { storage } from "@/server/providers/storage";
 
 export const GET = route({ auth: "session" }, async ({ session, params, meta }) => {
   const f = await authoriseDownload(session, params.id, meta);
-  const url = await storage().signedUrl(f.storageKey, f.fileName, 60);
-  if (url) return NextResponse.redirect(url, { headers: { "cache-control": "no-store" } });
-  const buf = await storage().get(f.storageKey);
+  // Recordings are played in the page (<audio>), and the CSP only allows same-origin media, so they
+  // are streamed through the app. Downloads redirect to a short-lived presigned URL (S3).
   const inline = f.mimeType.startsWith("audio/");
+  if (!inline) {
+    const url = await storage().signedUrl(f.storageKey, f.fileName, 60);
+    if (url) return NextResponse.redirect(url, { headers: { "cache-control": "no-store" } });
+  }
+  const buf = await storage().get(f.storageKey);
   return new NextResponse(new Uint8Array(buf), {
     headers: {
       "content-type": f.mimeType,

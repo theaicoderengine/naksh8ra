@@ -8,7 +8,8 @@
 | Readiness | `/api/ready` (DB + Redis reachable) | failing > 2 min |
 | Errors | JSON logs, `level>=50` (`"request failed"`) (ship to your log platform; `SENTRY_DSN` is reserved but no error-tracking SDK is wired in yet) | 5xx rate > 1% over 5 min |
 | Latency | log field `ms` per request | p95 > 1 s (non-AI routes) |
-| Queue | `JobRun` table / Admin → Health (failed jobs, queue depth) | failed jobs > 0 in 15 min; oldest waiting > 10 min |
+| Queue | `JobRun` table / Admin → Operations (failed jobs, queue depth, job runner) | failed jobs > 0 in 15 min; oldest waiting > 10 min |
+| Jobs (Postgres queue, Hostinger) | `/api/health/jobs` (503 when due jobs wait > 15 min or no runner seen for 15 min); cron tick response | any 503 |
 | Interviews | `InterviewSession` status counts (FAILED, REQUIRES_REVIEW) | FAILED rate spike |
 | AI providers | `PROVIDER_ERROR` codes in logs; `UsageRecord` cost | error spike; daily cost over budget |
 | AI usage | `AiRequestLog` FAILED/DENIED rates; `AI_LIMIT_REACHED` per organisation; expired reservations swept (worker log "charged expired AI usage reservations") | sustained failure rate; any sweep charges (indicates crashed workers) |
@@ -73,12 +74,25 @@ MIGRATION_DATABASE_URL=... npm run db:verify-ai-access                          
 
 Read-only checks: both AI migrations applied, RLS enabled on the six AI tables with the expected policies, `atlas_app` cannot bypass RLS, `ai.manage` on OWNER/HR_ADMIN only, default-deny (grant counts), no orphan grants, encryption envelopes, usage counters consistent, no unswept reservations.
 
+## Background jobs on the Postgres queue (Hostinger)
+
+- **Normal operation:** the web process runs jobs within seconds of being queued. The hPanel cron calls `POST /api/internal/jobs/tick` every minute; each call wakes the site, enqueues due recurring jobs (UTC) and starts the runner.
+- **`/api/health/jobs` is 503 / "never seen":**
+  1. Check that the cron job exists and that its `CRON_SECRET` matches the site's. A 401 in the cron output means the secrets differ.
+  2. Check that the site is up (`/api/health`).
+  3. Read the runtime logs for `job runner cycle failed`.
+- **A job keeps failing:** Admin → Operations lists failed jobs with their last error. Fix the cause (provider key, quota, configuration), then use **Retry**. Jobs retry automatically 5 times with backoff (5 s doubling, at most 30 min); recurring maintenance jobs retry 3 times.
+- **Interrupted jobs:** a job whose process stopped (redeploy, restart, idle stop) is reclaimed after its 10-minute lease. If that happened on its last attempt it is marked FAILED with "lease expired".
+- **Manual processing (SSH):** create a 0600 env file outside the site folder, then run `npm run jobs:run -- --env-file=/path/to/env --max-seconds=600`. The command exits 1 if any job failed.
+- **Never** switch a live Hostinger site to `QUEUE_MODE=inline`; production refuses it. Inline would run jobs inside requests, without retries.
+
 ## Rollback
 
 - **App:** redeploy the previous image tag for web and worker (migrations are backward compatible by policy).
 - **Rolling back past the AI access release (`ai_provider_access` migration) — read this first.** Rehearsed on a copy of the previous release's database: the schema is compatible (older code ignores the new tables; its `migrate deploy` finds nothing pending), **but older code has no grant checks and uses the deployment `LLM_PROVIDER` key for every organisation**. Before rolling back: set `LLM_PROVIDER=none` and remove platform AI/speech keys from the old release's environment (or keep only the providers you are willing to expose to all tenants), and expect organisation BYOK keys to be ignored. Running the old seed removes `ai.manage` from roles; after rolling forward again, run the current `npm run db:seed`, then `npm run db:verify-ai-access`.
 - **Migration gone wrong:** do not hand-edit `_prisma_migrations`. Write a forward fix migration; if data was damaged, PITR restore as above. Never run `prisma migrate reset` or `db push` against shared environments.
 - **Bad configuration:** revert the secret/env version and restart.
+- **Hostinger and the Postgres queue:** releases before the Postgres queue do not recognise `QUEUE_MODE=postgres` and refuse to start with it. Hostinger deployments begin with this release, so roll back only to releases that include it.
 
 ## Release checklist
 

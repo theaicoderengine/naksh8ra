@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { runWithDeadline } from "@/server/deadline";
 import { NextRequest } from "next/server";
 import { prisma } from "@/server/db/client";
 import { withOrg, withSystem } from "@/server/db/tenant";
@@ -372,6 +373,18 @@ describe("Concurrency, limits and credential rotation", () => {
     await expect(aiJson(scope, "JOB_DRAFTING", req("[[fixture:usage-then-fail]]"))).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
     expect((await counter(org.id)).tokens).toBe(c.tokens + 100);
     expect(await openReservations(org.id)).toBe(0);
+  });
+
+  it("inside a request, retries stop when the request deadline cannot fit another attempt", async () => {
+    const { org } = await makeOrg();
+    await grantPlatformAi(org.id, ["JOB_DRAFTING"]);
+    const scope = { kind: "ORG" as const, organisationId: org.id };
+    // ~2 s usable budget: the first attempt runs, a retry would not finish before the host cut-off.
+    await expect(runWithDeadline(7_000, () => aiJson(scope, "JOB_DRAFTING", { ...jsonReq, user: `${jsonReq.user} [[fixture:unavailable]]` }))).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    const c = await counter(org.id);
+    expect(c.requests).toBe(1);
+    expect(c.tokensReserved).toBe(0);
+    expect((await logs(org.id)).map((l) => l.attempt)).toEqual([1]);
   });
 
   it("a retry stops immediately when access is revoked between attempts", async () => {

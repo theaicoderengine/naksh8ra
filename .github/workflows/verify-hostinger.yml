@@ -1,0 +1,26 @@
+# Manual post-deployment verification of a live Hostinger site (read-only checks; the cron
+# tick is exercised only if the CRON_SECRET secret is set on the chosen environment).
+name: Verify Hostinger deployment
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Public base URL, e.g. https://hire.example.com
+        required: true
+      environment:
+        description: GitHub environment holding CRON_SECRET (optional)
+        default: production
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/hostinger/verify-deployment.mjs "${{ inputs.url }}"
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}

@@ -1,4 +1,6 @@
-# AWS deployment (infra/aws)
+# AWS deployment (infra/aws) — optional
+
+> Not part of the Hostinger deployment ([deployment-hostinger.md](deployment-hostinger.md)). Kept for a future move to containers; nothing here runs unless the AWS workflow is started manually.
 
 **Status:** the Terraform in `infra/aws` passes `terraform validate` and `terraform fmt -check`. It has **never been applied**: no AWS account was available when it was written. The pipeline (`.github/workflows/deploy.yml`) has never run. Treat the first apply on staging as the real test.
 

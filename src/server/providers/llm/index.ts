@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { GoogleGenAI, type Fetch } from "@google/genai";
 import { z as z4 } from "zod/v4";
 import { env } from "../../env";
+import { attemptTimeoutMs } from "../../deadline";
 import { AppError } from "../../errors";
 import { logger } from "../../logger";
 import type { LlmProviderId } from "../../ai/catalog";
@@ -166,7 +167,7 @@ class AnthropicAdapter implements LlmAdapter {
   mode = "LIVE" as const;
   private client: Anthropic;
   constructor(private apiKey: string, opts: AdapterOptions) {
-    this.client = new Anthropic({ apiKey: requireKey(apiKey), authToken: null, baseURL: OFFICIAL_BASE_URL.ANTHROPIC, timeout: opts.timeoutMs ?? env().AI_TIMEOUT_MS, maxRetries: 0, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
+    this.client = new Anthropic({ apiKey: requireKey(apiKey), authToken: null, baseURL: OFFICIAL_BASE_URL.ANTHROPIC, timeout: opts.timeoutMs ?? attemptTimeoutMs(env().AI_TIMEOUT_MS), maxRetries: 0, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
   }
 
   /**
@@ -222,7 +223,7 @@ class OpenAiAdapter implements LlmAdapter {
   mode = "LIVE" as const;
   private client: OpenAI;
   constructor(private apiKey: string, opts: AdapterOptions) {
-    this.client = new OpenAI({ apiKey: requireKey(apiKey), organization: null, project: null, baseURL: OFFICIAL_BASE_URL.OPENAI, timeout: opts.timeoutMs ?? env().AI_TIMEOUT_MS, maxRetries: 0, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
+    this.client = new OpenAI({ apiKey: requireKey(apiKey), organization: null, project: null, baseURL: OFFICIAL_BASE_URL.OPENAI, timeout: opts.timeoutMs ?? attemptTimeoutMs(env().AI_TIMEOUT_MS), maxRetries: 0, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
   }
   async json<T>(req: JsonRequest<T>, model: string) {
     try {
@@ -271,7 +272,7 @@ export class GeminiAdapter implements LlmAdapter {
       apiKey: requireKey(apiKey),
       vertexai: false, // never pick up Vertex/ADC credentials from the environment
       httpOptions: {
-        timeout: opts.timeoutMs ?? env().AI_TIMEOUT_MS,
+        timeout: opts.timeoutMs ?? attemptTimeoutMs(env().AI_TIMEOUT_MS),
         baseUrl: OFFICIAL_BASE_URL.GEMINI,
         // No SDK retries: the resolver retries transient errors only (never 429, so a
         // free-tier quota is not burned), reserving platform limits per attempt.

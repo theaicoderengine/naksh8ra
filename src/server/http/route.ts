@@ -7,6 +7,8 @@ import { SESSION_COOKIE, resolveSessionToken, type SessionInfo } from "../auth/s
 import { resolveOrgContext, requirePlatform, requireVerified, type OrgContext } from "../auth/context";
 import type { Permission, PlatformPermission } from "../rbac/permissions";
 import { rateLimit, RULES } from "../rate-limit";
+import { runWithDeadline } from "../deadline";
+import { env } from "../env";
 
 const MAX_JSON_BYTES = 1024 * 1024;
 
@@ -39,11 +41,24 @@ type Args<B, Q, A extends AuthMode> = {
   org: A extends "org" ? OrgContext : null;
 };
 
+/**
+ * Client IP for rate limits and audit. Proxies append the address they received the request from,
+ * so with TRUST_PROXY the trustworthy entry is the one TRUST_PROXY_HOPS from the right (1 = the
+ * proxy in front of the app, e.g. Hostinger's or an AWS ALB). Entries further left are
+ * client-supplied and can be forged.
+ */
+export function clientIp(h: Headers): string | null {
+  const parts = (h.get("x-forwarded-for") ?? "").split(",").map((p) => p.trim()).filter(Boolean);
+  if (process.env.TRUST_PROXY === "true" && parts.length) {
+    const hops = Math.max(1, Number(process.env.TRUST_PROXY_HOPS ?? 1) || 1);
+    return parts[Math.max(0, parts.length - hops)];
+  }
+  return h.get("x-real-ip") ?? parts.at(-1) ?? null;
+}
+
 export function getMeta(req: NextRequest): RequestMeta {
-  const fwd = req.headers.get("x-forwarded-for");
-  const ip = process.env.TRUST_PROXY === "true" && fwd ? fwd.split(",")[0].trim() : (req.headers.get("x-real-ip") ?? fwd?.split(",")[0].trim() ?? null);
   return {
-    ip,
+    ip: clientIp(req.headers),
     userAgent: req.headers.get("user-agent"),
     requestId: req.headers.get("x-request-id") ?? crypto.randomUUID(),
   };
@@ -119,7 +134,8 @@ export function route<B extends z.ZodTypeAny | undefined = undefined, Q extends 
       if (opts.query) query = opts.query.parse(Object.fromEntries(req.nextUrl.searchParams.entries()));
 
       const params = ctx?.params ? await ctx.params : {};
-      const result = await handler({ req, params, body, query, meta, session, org } as never);
+      // Bounded so provider calls end cleanly before the host cuts the request off.
+      const result = await runWithDeadline(env().REQUEST_DEADLINE_MS, () => handler({ req, params, body, query, meta, session, org } as never));
       const res = result instanceof Response ? result : NextResponse.json({ data: result ?? null });
       res.headers.set("x-request-id", meta.requestId);
       logger.info({ method, path: req.nextUrl.pathname, status: res.status, ms: Date.now() - started, requestId: meta.requestId }, "request");

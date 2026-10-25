@@ -6,6 +6,7 @@ import http from "node:http";
 import { Worker, Queue } from "bullmq";
 import { QUEUE_NAME, recordJob, type JobName } from "../server/queue";
 import { runHandler } from "../server/queue/handlers";
+import { SCHEDULES } from "../server/queue/schedules";
 import { newRedisConnection } from "../server/queue/redis";
 import { logger } from "../server/logger";
 import { prisma } from "../server/db/client";
@@ -13,13 +14,6 @@ import { prisma } from "../server/db/client";
 // SERVICE_NAME is set by `npm run worker` (the logger reads it at import time).
 const concurrency = Number(process.env.WORKER_CONCURRENCY ?? 8);
 
-const SCHEDULES: { name: JobName; pattern: string }[] = [
-  { name: "sessions.timeout", pattern: "*/5 * * * *" },
-  { name: "ai.reservations.sweep", pattern: "*/10 * * * *" },
-  { name: "interview.reminders", pattern: "0 * * * *" },
-  { name: "retention.sweep", pattern: "30 3 * * *" },
-  { name: "billing.reconcile", pattern: "15 * * * *" },
-];
 
 async function main() {
   const connection = newRedisConnection();

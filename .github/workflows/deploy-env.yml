@@ -1,6 +1,6 @@
 # Deploys one environment. Order matters: images → migrate task (migrations, system seed,
 # AI access verification) → services. Any failed step stops the rollout; nothing is skipped.
-name: Deploy environment
+name: Deploy AWS environment (optional)
 on:
   workflow_call:
     inputs:

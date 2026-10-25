@@ -6,6 +6,7 @@ import { logger } from "../logger";
 import { createLlmAdapter, isRetryable, maxOutputTokens, scrubSecrets, type JsonRequest, type TextRequest, type TokenUsage } from "../providers/llm";
 import { createId } from "../../lib/id";
 import { env } from "../env";
+import { canRetryWithin } from "../deadline";
 import { sttProvider, ttsProvider, type Transcription } from "../providers/speech";
 import { estimateLlmCostMicros, recordUsage } from "../providers/usage";
 import {
@@ -267,7 +268,8 @@ export async function sweepExpiredReservations(now = new Date()) {
 function chargeForFailure(e: AppError, estimate: number, inputEstimate: number) {
   const usage = (e.details as { usage?: TokenUsage } | undefined)?.usage;
   if (usage && (usage.inputTokens != null || usage.outputTokens != null)) return (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-  const reason = (e.details as { reason?: string } | undefined)?.reason;
+  const { reason, deadline } = (e.details as { reason?: string; deadline?: boolean } | undefined) ?? {};
+  if (deadline) return 0; // no time left in the request: the provider was never called
   // Timeouts / 5xx: the provider may have processed the prompt — charge the input estimate.
   if (reason === "timeout" || reason === "unavailable") return Math.min(inputEstimate, estimate);
   return 0; // rejected before processing (auth, quota, bad request, unknown model)
@@ -382,8 +384,10 @@ async function run<T>(
       await logRequest({ scope, capability, status: "FAILED", r, usage, errorCode: (e.details as { reason?: string } | undefined)?.reason ?? e.code, startedAt, attempt });
       await noteCredentialError(scope, r, e);
       // Transient errors only (5xx / timeouts) — never quota (429), auth or validation errors.
-      if (attempt < attempts && isRetryable(e)) {
-        await new Promise((res) => setTimeout(res, env().AI_RETRY_BASE_MS * 2 ** (attempt - 1)));
+      const delay = env().AI_RETRY_BASE_MS * 2 ** (attempt - 1);
+      // No retry once the request budget cannot fit another attempt (the error is reported as is).
+      if (attempt < attempts && isRetryable(e) && !(e.details as { deadline?: boolean } | undefined)?.deadline && canRetryWithin(delay)) {
+        await new Promise((res) => setTimeout(res, delay));
         continue;
       }
       throw e;

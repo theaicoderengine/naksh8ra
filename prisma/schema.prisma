@@ -1715,15 +1715,15 @@ model OrgAiRoute {
 
 /// Atomic per-period counters enforcing platform-funded usage limits.
 model AiUsageCounter {
-  id         String       @id @default(cuid())
-  subject    String
-  provider   AiProvider
-  capability AiCapability
-  period     String // YYYY-MM (UTC)
-  requests   Int          @default(0) // attempts that reached (or were reserved for) the provider
-  tokens     Int          @default(0) // settled token usage
-  tokensReserved Int      @default(0) // in-flight reservations, not yet settled
-  updatedAt  DateTime     @updatedAt
+  id             String       @id @default(cuid())
+  subject        String
+  provider       AiProvider
+  capability     AiCapability
+  period         String // YYYY-MM (UTC)
+  requests       Int          @default(0) // attempts that reached (or were reserved for) the provider
+  tokens         Int          @default(0) // settled token usage
+  tokensReserved Int          @default(0) // in-flight reservations, not yet settled
+  updatedAt      DateTime     @updatedAt
 
   @@unique([subject, provider, capability, period])
 }
@@ -1747,7 +1747,7 @@ model AiUsageReservation {
 
 /// One row per AI operation attempt (success, failure or denial). No prompts or outputs are stored.
 model AiRequestLog {
-  id                  String             @id @default(cuid())
+  id                  String              @id @default(cuid())
   organisationId      String?
   userId              String?
   sessionId           String?
@@ -1763,8 +1763,8 @@ model AiRequestLog {
   outputTokens        Int?
   estimatedCostMicros Int? // estimate from configured price table; NOT provider billing
   latencyMs           Int?
-  attempt             Int                @default(1)
-  createdAt           DateTime           @default(now())
+  attempt             Int                 @default(1)
+  createdAt           DateTime            @default(now())
 
   @@index([organisationId, createdAt])
   @@index([userId, createdAt])
@@ -2020,8 +2020,30 @@ model JobRun {
   error          String?
   createdAt      DateTime  @default(now())
   finishedAt     DateTime?
+  // Postgres queue (QUEUE_MODE=postgres): when the job may run, and the lease of the runner
+  // holding it. A RUNNING row whose lease expired is reclaimed (its runner stopped).
+  runAt          DateTime  @default(now())
+  maxAttempts    Int       @default(5)
+  lockedBy       String?
+  lockedUntil    DateTime?
+  startedAt      DateTime?
 
   @@index([status, createdAt])
+  @@index([queue, status, runAt])
+}
+
+/// Last enqueued slot per recurring job (Postgres queue): makes scheduling idempotent across runners.
+model JobSchedule {
+  name      String   @id
+  lastSlot  DateTime
+  updatedAt DateTime @updatedAt
+}
+
+/// Liveness of Postgres-queue runners, shown by /api/ready and the platform dashboard.
+model JobRunnerHeartbeat {
+  source     String   @id // in-process | tick | cli
+  lastSeenAt DateTime
+  processed  Int      @default(0)
 }
 
 model RateLimitBucket {

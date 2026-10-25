@@ -1,5 +1,7 @@
 # Deployment
 
+> **Hostinger** (Node.js Web App hosting, no Docker/Redis/workers): follow [deployment-hostinger.md](deployment-hostinger.md). This page covers container platforms.
+
 ## Topology
 
 | Component | Image / command | Scaling | Notes |
