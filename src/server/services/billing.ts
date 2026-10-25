@@ -30,7 +30,7 @@ export function stripe(): Stripe {
 
 /** Stripe instance usable for signature verification even without a secret key (verification is offline). */
 function verifier(): Stripe {
-  return stripeClient ?? new Stripe(env().STRIPE_SECRET_KEY ?? "sk_test_placeholder_for_signature_verification");
+  return stripeClient ?? new Stripe(env().STRIPE_SECRET_KEY ?? "unused-placeholder-signature-verification-only");
 }
 
 export function formatMoney(amountMinor: number, currency: string) {
