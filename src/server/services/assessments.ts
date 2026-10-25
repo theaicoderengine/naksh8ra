@@ -5,7 +5,7 @@ import { withOrg } from "../db/tenant";
 import { AppError, invalidState, notFound } from "../errors";
 import { audit } from "../audit";
 import type { OrgContext } from "../auth/context";
-import { llm } from "../providers/llm";
+import { aiJson } from "../ai/access";
 import { ASSESS_PROMPT_VERSION, ASSESS_SYSTEM, AssessmentSchema, inputBlock, type AssessmentOutput } from "../ai/prompts";
 import { transition, type SessionConfig } from "./interviews";
 import { loadApplicationScoped } from "./applications";
@@ -110,9 +110,10 @@ export async function runAssessment(organisationId: string, sessionId: string) {
   let model: string;
   let mode: "LIVE" | "FIXTURE";
   try {
-    const provider = llm();
-    mode = provider.mode;
-    const res = await provider.json({
+    // Scope comes from the session row loaded above (organisation verified by RLS and the
+    // where-clause), never from the job payload alone. Access is re-resolved now, so a
+    // revoked grant or removed key stops queued assessments that have not started.
+    const res = await aiJson({ kind: "ORG", organisationId: s.organisationId, sessionId }, "ASSESSMENT", {
       purpose: ASSESS_PROMPT_VERSION,
       system: ASSESS_SYSTEM,
       user: `Assess the candidate's answers for the role "${c.jobTitle}" against the competencies below.\n${inputBlock({
@@ -123,22 +124,30 @@ export async function runAssessment(organisationId: string, sessionId: string) {
         answers: answersForModel,
       })}`,
       schema: AssessmentSchema,
-      usage: { organisationId, sessionId },
       effort: "high",
     });
     output = res.data;
     model = res.model;
+    mode = res.mode;
   } catch (err) {
     const msg = err instanceof AppError ? err.message : "Assessment failed";
     await markFailed(s, msg, "FAILED");
-    if (err instanceof AppError && err.code === "PROVIDER_NOT_CONFIGURED") return; // no retry until configured
+    // Configuration, authorisation, limit and quota problems are not transient: don't let
+    // the queue burn retries (or quota). HR can retry from the interview page.
+    if (err instanceof AppError && ["PROVIDER_NOT_CONFIGURED", "AI_ACCESS_DENIED", "AI_LIMIT_REACHED", "PROVIDER_QUOTA_EXCEEDED"].includes(err.code)) return;
     throw err; // let the queue retry transient provider errors
   }
 
   const processed = postProcessAssessment(output, c.competencies.map((x) => x.key), answersForModel.map((a) => ({ position: a.position, text: a.answer })));
 
   await withOrg(organisationId, null, async (tx) => {
-    const fresh = await tx.interviewSession.findFirstOrThrow({ where: { id: sessionId } });
+    let fresh = await tx.interviewSession.findFirstOrThrow({ where: { id: sessionId } });
+    // A queue retry after a failed attempt runs on a FAILED session: re-enter PROCESSING
+    // first so the state machine records the retry (FAILED → PROCESSING → ASSESSED).
+    if (fresh.status === "FAILED") {
+      await transition(tx, fresh, "PROCESSING", {}, { type: "ASSESSMENT_RETRY", data: { by: "queue" } });
+      fresh = await tx.interviewSession.findFirstOrThrow({ where: { id: sessionId } });
+    }
     await tx.assessment.deleteMany({ where: { sessionId } }); // re-run replaces a failed attempt
     const assessment = await tx.assessment.create({
       data: {

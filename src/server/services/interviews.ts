@@ -13,8 +13,7 @@ import { loadApplicationScoped } from "./applications";
 import { sendEmail, notify } from "./notifications";
 import { env } from "../env";
 import { enqueue } from "../queue";
-import { llm } from "../providers/llm";
-import { sttProvider, ttsProvider } from "../providers/speech";
+import { aiJson, aiSynthesize, aiTranscribe, assertAiAvailable, assertSpeechAvailable, describeAi, type AiScope } from "../ai/access";
 import { storeFile } from "./files";
 import { AUDIO_TYPES } from "../providers/scan";
 import { QGEN_PROMPT_VERSION, QGEN_SYSTEM, QuestionSetSchema, TURN_PROMPT_VERSION, TURN_SYSTEM, TurnSchema, inputBlock } from "../ai/prompts";
@@ -105,6 +104,7 @@ export const inviteSchema = z.object({
 export async function inviteToInterview(ctx: OrgContext, applicationId: string, input: z.infer<typeof inviteSchema>, meta: RequestMeta) {
   ctx.assert("interviews.invite");
   const token = randomToken();
+  const providerMode = await assessmentProviderMode(ctx.org.id);
   const result = await withOrg(ctx.org.id, ctx.userId, async (tx) => {
     const app = await loadApplicationScoped(ctx, tx, applicationId);
     if (["HIRED", "REJECTED", "WITHDRAWN", "DRAFT"].includes(app.status)) throw invalidState("Interviews can only be sent for active applications");
@@ -173,7 +173,7 @@ export async function inviteToInterview(ctx: OrgContext, applicationId: string, 
     });
     // Reserve one credit up front so the candidate is never blocked mid-interview.
     await reserve(tx, { organisationId: ctx.org.id }, session.creditReservationKey!, session.id);
-    await transition(tx, session, "INVITED", { providerMode: safeProviderMode() }, { data: { by: ctx.userId } });
+    await transition(tx, session, "INVITED", { providerMode }, { data: { by: ctx.userId } });
     await tx.interviewInvitation.update({ where: { id: invitation.id }, data: { sentAt: new Date() } });
     await moveAppToStageKind(tx, ctx.org.id, app.id, "AI_INTERVIEW_INVITED", ctx.userId, "AI interview invited");
     await audit({ organisationId: ctx.org.id, actorUserId: ctx.userId, action: "interview.invited", targetType: "InterviewSession", targetId: session.id, ip: meta.ip, metadata: { template: tpl.id, mode: tpl.mode } }, tx);
@@ -192,12 +192,10 @@ export async function inviteToInterview(ctx: OrgContext, applicationId: string, 
   return { invitationId: result.invitation.id, sessionId: result.session.id, expiresAt: result.invitation.expiresAt, ...(env().APP_ENV !== "production" && process.env.EXPOSE_TEST_TOKENS === "true" ? { testToken: token } : {}) };
 }
 
-function safeProviderMode(): "LIVE" | "FIXTURE" {
-  try {
-    return llm().mode === "FIXTURE" ? "FIXTURE" : "LIVE";
-  } catch {
-    return "LIVE";
-  }
+/** Label sessions FIXTURE when the organisation's assessment provider is the test fixture. */
+async function assessmentProviderMode(organisationId: string): Promise<"LIVE" | "FIXTURE"> {
+  const a = await describeAi({ kind: "ORG", organisationId }, "ASSESSMENT");
+  return a.available && a.resolution?.mode === "FIXTURE" ? "FIXTURE" : "LIVE";
 }
 
 /** Cancel (HR, withdrawal, or system). Releases the reserved credit if no answer was given. */
@@ -279,7 +277,7 @@ async function expireIfDue(tx: Tx, s: InterviewSession) {
 
 /** Candidate-safe view of the session: no rubric, guidance, assessment or internal status. */
 export async function getCandidateState(a: InterviewAccess) {
-  return withOrg(a.organisationId, a.actorUserId, async (tx) => {
+  const { _needs, ...state } = await withOrg(a.organisationId, a.actorUserId, async (tx) => {
     let s = await loadSession(tx, a);
     s = await expireIfDue(tx, s);
     const c = cfg(s);
@@ -289,17 +287,11 @@ export async function getCandidateState(a: InterviewAccess) {
     const current = s.status === "IN_PROGRESS" && s.mode === "STRUCTURED_AUDIO" ? p[s.currentIndex] : null;
     const lastAnswered = Math.max(-1, ...answers.filter((x) => !x.isFollowUp).map((x) => x.position));
     const lastAttempt = answers.filter((x) => x.position === lastAnswered).reduce((m, x) => Math.max(m, x.attempt), 0);
-    let providers: { ready: boolean; message: string | null } = { ready: true, message: null };
-    try {
-      if (s.mode === "REALTIME_CONVERSATIONAL") llm();
-      if (!(c.accessibility.allowTypedAnswers && !c.recordAudio)) sttProvider();
-    } catch (e) {
-      providers = { ready: false, message: e instanceof Error ? e.message : "AI provider not configured" };
-    }
+    const _needs = { conversation: s.mode === "REALTIME_CONVERSATIONAL", transcription: !(c.accessibility.allowTypedAnswers && !c.recordAudio), sessionId: s.id };
     return {
+      _needs,
       status: candidateStatus(s.status),
       providerMode: s.providerMode,
-      providers,
       organisation: c.organisationName,
       jobTitle: c.jobTitle,
       mode: s.mode,
@@ -327,9 +319,18 @@ export async function getCandidateState(a: InterviewAccess) {
           : [],
       consents: Object.fromEntries(consents.map((x) => [x.type, x.granted])),
       noticeVersion: PRIVACY_NOTICE_VERSION,
-      ttsMode: ttsProvider().name === "browser" ? "browser" : "server",
     };
   });
+  // Re-resolved on every request: the organisation's own key or an authorised platform grant.
+  const scope: AiScope = { kind: "ORG", organisationId: a.organisationId, sessionId: _needs.sessionId };
+  let providers: { ready: boolean; message: string | null } = { ready: true, message: null };
+  const checks = [
+    ...(_needs.conversation ? [describeAi(scope, "INTERVIEW_CONVERSATION")] : []),
+    ...(_needs.transcription ? [describeAi(scope, "TRANSCRIPTION")] : []),
+  ];
+  for (const r of await Promise.all(checks)) if (!r.available) providers = { ready: false, message: r.message };
+  const tts = await describeAi(scope, "SPEECH_SYNTHESIS");
+  return { ...state, providers, ttsMode: tts.available && tts.resolution ? ("server" as const) : ("browser" as const) };
 }
 
 function candidateStatus(s: InterviewSessionStatus) {
@@ -397,7 +398,7 @@ async function buildAdaptivePlan(s: InterviewSession): Promise<PlanItem[]> {
   const existing = plan(s);
   if (existing.length >= c.questionCount) return existing;
   const missing = c.questionCount - existing.length;
-  const res = await llm().json({
+  const res = await aiJson({ kind: "ORG", organisationId: s.organisationId, sessionId: s.id }, "QUESTION_GENERATION", {
     purpose: QGEN_PROMPT_VERSION,
     system: QGEN_SYSTEM,
     user: `Write ${missing} additional interview questions in language "${c.language}" at ${c.difficulty} difficulty, distinct from the existing ones.\n${inputBlock({
@@ -407,7 +408,6 @@ async function buildAdaptivePlan(s: InterviewSession): Promise<PlanItem[]> {
       competencies: c.competencies.map((x) => ({ key: x.key, name: x.name, description: x.description })),
     })}`,
     schema: QuestionSetSchema,
-    usage: { organisationId: s.organisationId, sessionId: s.id },
     effort: "low",
   });
   const byKey = new Map(c.competencies.map((x) => [x.key, x.id]));
@@ -418,7 +418,7 @@ async function buildAdaptivePlan(s: InterviewSession): Promise<PlanItem[]> {
 }
 
 async function speak(s: InterviewSession, text: string) {
-  const audio = await ttsProvider().synthesize(text, cfg(s).voice, { organisationId: s.organisationId, sessionId: s.id });
+  const audio = await aiSynthesize({ kind: "ORG", organisationId: s.organisationId, sessionId: s.id }, text, cfg(s).voice);
   return audio ? { audioBase64: audio.audio.toString("base64"), audioMime: audio.mime } : { audioBase64: null, audioMime: null };
 }
 
@@ -426,8 +426,10 @@ export async function startInterview(a: InterviewAccess, meta: RequestMeta) {
   // Provider readiness is checked before any state change: never pretend an interview can run.
   const pre = await withOrg(a.organisationId, a.actorUserId, (tx) => loadSession(tx, a));
   const c = cfg(pre);
-  if (pre.mode === "REALTIME_CONVERSATIONAL" || c.questionSelection === "ADAPTIVE") llm();
-  if (c.recordAudio || !c.accessibility.allowTypedAnswers) sttProvider();
+  const scope: AiScope = { kind: "ORG", organisationId: pre.organisationId, sessionId: pre.id };
+  const conversation = pre.mode === "REALTIME_CONVERSATIONAL" ? await assertAiAvailable(scope, "INTERVIEW_CONVERSATION") : null;
+  if (c.questionSelection === "ADAPTIVE" && plan(pre).length < c.questionCount) await assertAiAvailable(scope, "QUESTION_GENERATION");
+  if (c.recordAudio || !c.accessibility.allowTypedAnswers) await assertSpeechAvailable(scope, "TRANSCRIPTION");
 
   let newPlan: PlanItem[] | null = null;
   if (pre.status === "READY" && plan(pre).length < c.questionCount) newPlan = await buildAdaptivePlan(pre);
@@ -440,7 +442,7 @@ export async function startInterview(a: InterviewAccess, meta: RequestMeta) {
       if (!cfg(s).allowResume) throw invalidState("This interview cannot be resumed. Contact the employer.");
       await transition(tx, s, "IN_PROGRESS", { lastActivityAt: new Date() }, { type: "RESUMED" });
     } else if (s.status === "READY") {
-      await transition(tx, s, "IN_PROGRESS", { startedAt: new Date(), lastActivityAt: new Date(), ...(newPlan ? { plan: newPlan as unknown as Prisma.InputJsonValue } : {}), llmModel: safeModel(), promptVersion: TURN_PROMPT_VERSION }, { type: "STARTED", data: { ua: meta.userAgent?.slice(0, 200) ?? "" } });
+      await transition(tx, s, "IN_PROGRESS", { startedAt: new Date(), lastActivityAt: new Date(), ...(newPlan ? { plan: newPlan as unknown as Prisma.InputJsonValue } : {}), llmModel: conversation?.model ?? null, promptVersion: TURN_PROMPT_VERSION }, { type: "STARTED", data: { ua: meta.userAgent?.slice(0, 200) ?? "" } });
     } else if (s.status === "INVITED") {
       throw invalidState("Please review and accept the interview notice first");
     } else {
@@ -465,13 +467,6 @@ export async function startInterview(a: InterviewAccess, meta: RequestMeta) {
   return { question: q ? { position: q.position, prompt: q.prompt, answerSeconds: Math.round(q.answerSeconds * c.accessibility.extendedTimeMultiplier) } : null, ...(q ? await speak(s, q.prompt) : {}) };
 }
 
-function safeModel() {
-  try {
-    return llm().model();
-  } catch {
-    return null;
-  }
-}
 
 // ───────────────────────── Answers (structured) ─────────────────────────
 
@@ -482,7 +477,14 @@ async function transcribeAnswer(s: InterviewSession, payload: AnswerPayload) {
   if (payload.audio) {
     const consentRecording = await prisma.consentRecord.findFirst({ where: { sessionId: s.id, type: "INTERVIEW_RECORDING" }, orderBy: { createdAt: "desc" } });
     const file = await storeFile({ buffer: payload.audio.buffer, fileName: payload.audio.fileName, purpose: "AUDIO", allowedTypes: AUDIO_TYPES, organisationId: s.organisationId, maxBytes: 25 * 1024 * 1024 });
-    const t = await sttProvider().transcribe(payload.audio.buffer, file.mimeType, c.language, { organisationId: s.organisationId, sessionId: s.id });
+    let t;
+    try {
+      t = await aiTranscribe({ kind: "ORG", organisationId: s.organisationId, sessionId: s.id }, payload.audio.buffer, file.mimeType, c.language);
+    } catch (err) {
+      const { deleteStoredFile } = await import("./files");
+      await deleteStoredFile(file.id); // never keep audio for an answer that was not recorded
+      throw err;
+    }
     // If recording consent was not given (or the template doesn't store audio), keep transcript only.
     const keepAudio = c.recordAudio && consentRecording?.granted === true;
     if (!keepAudio) {
@@ -583,11 +585,12 @@ export async function conversationalTurn(a: InterviewAccess, payload: Omit<Answe
   const followUpsRemaining = Math.max(0, c.maxFollowUps - pre.followUpsUsed);
 
   let decision: { action: "ASK_NEXT" | "FOLLOW_UP" | "CLARIFY" | "REPEAT" | "END"; say: string };
+  let llmMode: "LIVE" | "FIXTURE" | null = null;
   if (!t.transcript) decision = { action: "REPEAT", say: `I didn't catch that. ${current.prompt}` };
   else if (REPEAT_RE.test(candidateText) && candidateText.split(/\s+/).length < 12) decision = { action: "REPEAT", say: `Of course. ${current.prompt}` };
   else if (timeUp) decision = { action: "END", say: "We've reached the time for this interview. Thank you very much for your answers. The hiring team will review your interview and be in touch about next steps." };
   else {
-    const res = await llm().json({
+    const res = await aiJson({ kind: "ORG", organisationId: pre.organisationId, sessionId: pre.id }, "INTERVIEW_CONVERSATION", {
       purpose: TURN_PROMPT_VERSION,
       system: TURN_SYSTEM,
       user: `Decide the next interviewer turn.\n${inputBlock({
@@ -602,12 +605,12 @@ export async function conversationalTurn(a: InterviewAccess, payload: Omit<Answe
         minutesRemaining: Math.max(0, Math.round(c.durationMinutes - elapsedMin)),
       })}`,
       schema: TurnSchema,
-      usage: { organisationId: pre.organisationId, sessionId: pre.id },
       fast: true,
       effort: "low",
       maxTokens: 2000,
     });
     decision = res.data;
+    llmMode = res.mode;
     // Server-side guards: the model cannot exceed follow-up limits or skip/extend the plan.
     if (decision.action === "FOLLOW_UP" && followUpsRemaining === 0) decision = next ? { action: "ASK_NEXT", say: next.prompt } : { action: "END", say: decision.say };
     if (decision.action === "ASK_NEXT" && !next) decision = { action: "END", say: "Thank you, that covers all of my questions. The hiring team will review your interview and be in touch about next steps." };
@@ -642,7 +645,7 @@ export async function conversationalTurn(a: InterviewAccess, payload: Omit<Answe
         followUpsUsed: decision.action === "FOLLOW_UP" ? { increment: 1 } : decision.action === "ASK_NEXT" ? 0 : undefined,
         lastActivityAt: new Date(),
         version: { increment: 1 },
-        ...(t.sttMode === "FIXTURE" || llm().mode === "FIXTURE" ? { providerMode: "FIXTURE" } : {}),
+        ...(t.sttMode === "FIXTURE" || llmMode === "FIXTURE" ? { providerMode: "FIXTURE" } : {}),
       },
     });
   });

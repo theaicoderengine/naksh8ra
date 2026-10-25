@@ -15,7 +15,7 @@ import { meta, uid, sessionFor, PASSWORD } from "../helpers";
 import { grant } from "@/server/billing/credits";
 import type { OrgContext } from "@/server/auth/context";
 
-import { tokenFromEmail } from "../helpers";
+import { tokenFromEmail, grantPlatformAi, ORG_AI } from "../helpers";
 
 describe("Journey: organisation → team → vacancy → AI interview → assessment → decision", () => {
   const ownerEmail = `owner-${uid()}@acme.test`;
@@ -42,6 +42,8 @@ describe("Journey: organisation → team → vacancy → AI interview → assess
     const session = (await resolveSessionToken(l.token))!;
     const org = await createOrganisation(session, { name: `Acme ${uid()}`, type: "EMPLOYER", timezone: "UTC", acceptTerms: true }, meta);
     orgId = org.id;
+    // Platform AI is denied by default; a super-admin grants it explicitly (FIXTURE provider in tests).
+    await grantPlatformAi(orgId, ORG_AI);
     owner = await resolveOrgContext(session, org.slug);
     expect(owner.roleKey).toBe("OWNER");
     const stages = await listStages(owner);

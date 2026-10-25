@@ -12,6 +12,8 @@ import { startPracticeSchema } from "./services/practice";
 import { programmeSchema, cohortSchema } from "./services/universities";
 import { checkoutSchema } from "./services/billing";
 import { dsrSchema, retentionSchema } from "./services/privacy";
+import { credentialSchema as aiCredentialSchema, testKeySchema as aiTestKeySchema, routesSchema as aiRoutesSchema } from "./services/ai-settings";
+import { grantsSchema as aiGrantsSchema } from "./services/ai-admin";
 import { orgActionSchema, creditAdjustSchema, planSchema, packSchema, flagSchema, adminRoleSchema, ticketSchema, orgQuery, auditQuery } from "./services/platform";
 
 type Auth = "public" | "session" | "verified" | "org" | "platform" | "interview" | "signature";
@@ -157,6 +159,12 @@ export const ENDPOINTS: Ep[] = [
   E("post", "/billing/checkout", "Billing", "Create hosted checkout (subscription or credit pack)", "org", { permission: "billing.manage", body: checkoutSchema }),
   E("post", "/billing/portal", "Billing", "Open the billing portal (payment methods, invoices, plan changes)", "org", { permission: "billing.manage" }),
   E("post", "/billing/practice-checkout", "Billing", "Student: buy practice credits", "verified", { body: z.object({ packKey: z.string() }) }),
+  E("get", "/ai/settings", "AI providers", "Organisation AI settings: masked key metadata, effective provider per capability, platform grants (read-only), usage and recent errors", "org", { permission: "ai.manage" }),
+  E("post", "/ai/credentials/{provider}/test-key", "AI providers", "Test an API key + model without saving it (no content generated)", "org", { permission: "ai.manage", body: aiTestKeySchema }),
+  E("put", "/ai/credentials/{provider}", "AI providers", "Connect, rotate or change model of the organisation's own key (tested before activation; key never returned)", "org", { permission: "ai.manage", body: aiCredentialSchema }),
+  E("delete", "/ai/credentials/{provider}", "AI providers", "Remove the organisation's key (selected routes then fail clearly; no silent fallback)", "org", { permission: "ai.manage" }),
+  E("post", "/ai/credentials/{provider}/test", "AI providers", "Re-test the stored key and record its health", "org", { permission: "ai.manage" }),
+  E("put", "/ai/routes", "AI providers", "Choose credential source/provider per capability (platform only where granted)", "org", { permission: "ai.manage", body: aiRoutesSchema }),
   E("get", "/credits", "Credits", "Credit balance and immutable ledger", "org", { permission: "billing.view" }),
   E("post", "/webhooks/stripe", "Webhooks", "Stripe webhook (signature-verified, idempotent)", "signature"),
   E("post", "/webhooks/email", "Webhooks", "Email delivery status webhook (HMAC-signed)", "signature"),
@@ -189,6 +197,11 @@ export const ENDPOINTS: Ep[] = [
   E("get", "/platform/organisations", "Platform", "Organisation directory (metadata only)", "platform", { query: orgQuery }),
   E("get", "/platform/organisations/{id}", "Platform", "Organisation detail (aggregate counts; audited)", "platform"),
   E("post", "/platform/organisations/{id}/actions", "Platform", "Suspend / reactivate / verify (reason + confirmation)", "platform", { body: orgActionSchema }),
+  E("get", "/platform/ai", "Platform", "Organisations' AI access overview and deployment credential status (booleans only)", "platform"),
+  E("get", "/platform/ai/personal", "Platform", "AI access for personal (student) accounts", "platform"),
+  E("put", "/platform/ai/personal/grants", "Platform", "Grant/revoke platform AI for personal accounts (super-admin; reason required; audited)", "platform", { body: aiGrantsSchema }),
+  E("get", "/platform/organisations/{id}/ai", "Platform", "Organisation AI access: grants, limits, usage, credential health (masked), audit history", "platform"),
+  E("put", "/platform/organisations/{id}/ai/grants", "Platform", "Grant/revoke platform-funded AI per provider & capability (super-admin; reason required; audited)", "platform", { body: aiGrantsSchema }),
   E("post", "/platform/organisations/{id}/credits", "Platform", "Adjust credits (reason, idempotent)", "platform", { body: creditAdjustSchema }),
   E("post", "/platform/organisations/{id}/support-access", "Platform", "Request support access", "platform", { body: z.object({ reason: z.string() }) }),
   E("get", "/platform/plans", "Platform", "Plans & packs", "platform"),

@@ -30,6 +30,14 @@ export const REDACT_PATHS = [
   "*.apiKey",
   "secret",
   "*.secret",
+  "encryptedKey",
+  "*.encryptedKey",
+  "api_key",
+  "*.api_key",
+  "headers[\"x-api-key\"]",
+  "*.headers[\"x-api-key\"]",
+  "headers[\"x-goog-api-key\"]",
+  "*.headers[\"x-goog-api-key\"]",
 ];
 
 export const logger = pino({

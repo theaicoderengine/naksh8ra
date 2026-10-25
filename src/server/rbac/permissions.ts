@@ -42,6 +42,7 @@ export const PERMISSIONS = {
   "university.import": "Import students via CSV",
   "support.request": "Open support tickets",
   "support.approve_access": "Approve platform support access to the workspace",
+  "ai.manage": "Connect the organisation's own AI provider keys and choose providers per AI capability",
 } as const;
 
 export type Permission = keyof typeof PERMISSIONS;
@@ -175,6 +176,8 @@ export const PLATFORM_PERMISSIONS = {
   "platform.security.view": "View security audit events",
   "platform.admins.manage": "Manage platform administrators",
   "platform.privacy.manage": "Process data subject requests",
+  "platform.ai.view": "View organisations' AI access, usage and credential health (never key values)",
+  "platform.ai.manage": "Grant or revoke platform-funded AI access and limits",
 } as const;
 
 export type PlatformPermission = keyof typeof PLATFORM_PERMISSIONS;
@@ -182,7 +185,7 @@ export type PlatformPermission = keyof typeof PLATFORM_PERMISSIONS;
 export const PLATFORM_ROLES: Record<string, PlatformPermission[]> = {
   NONE: [],
   SUPPORT: ["platform.orgs.view", "platform.tickets", "platform.ops.view"],
-  BILLING_ADMIN: ["platform.orgs.view", "platform.billing.view", "platform.billing.manage", "platform.tickets"],
+  BILLING_ADMIN: ["platform.orgs.view", "platform.billing.view", "platform.billing.manage", "platform.tickets", "platform.ai.view"],
   SUPER_ADMIN: Object.keys(PLATFORM_PERMISSIONS) as PlatformPermission[],
 };
 

@@ -19,8 +19,10 @@ export default async function Health() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Card><CardHeader title="Core" /><CardBody className="space-y-2 text-sm"><p>Database <Ok ok={h.database.ok} /></p><p>Redis <Ok ok={h.redis.configured ? h.redis.ok : null} /></p><p>Queue mode <Badge>{h.queue.mode}</Badge> {h.queue.staleQueued > 0 && <Badge tone="warning">{h.queue.staleQueued} stale queued</Badge>}</p><p>Storage <Badge>{h.storage.provider}</Badge></p><p>Malware scanner <Badge tone={h.malwareScanner.provider === "none" ? "warning" : "success"}>{h.malwareScanner.provider}</Badge></p></CardBody></Card>
         <Card><CardHeader title="AI providers" /><CardBody className="space-y-2 text-sm">
-          <p>LLM <Ok ok={h.llm.configured} label={h.llm.configured ? `${h.llm.provider} · ${h.llm.model}` : undefined} />{h.llm.mode === "FIXTURE" && <Badge tone="warning">fixture</Badge>}</p>
-          {!h.llm.configured && <p className="text-xs text-subtle">{"message" in h.llm ? h.llm.message : ""}</p>}
+          <p className="text-xs text-subtle">Platform-owned (deployment) credentials. Organisations can use them only where a super-admin has granted access (Admin → AI access).</p>
+          {h.llm.llm.filter((p) => p.provider !== "FIXTURE" || p.configured).map((p) => (
+            <p key={p.provider}>{p.provider.charAt(0) + p.provider.slice(1).toLowerCase()} <Ok ok={p.configured ? true : null} label={p.configured ? p.defaultModel : undefined} />{p.provider === "FIXTURE" && <Badge tone="warning">test only</Badge>}{h.llm.defaultProvider === p.provider && <Badge>default</Badge>}</p>
+          ))}
           <p>Speech-to-text <Ok ok={h.speech.stt.configured} label={h.speech.stt.configured ? h.speech.stt.provider : undefined} /></p>
           <p>Text-to-speech <Ok ok={h.speech.tts.configured} label={h.speech.tts.configured ? h.speech.tts.provider : undefined} /></p>
         </CardBody></Card>

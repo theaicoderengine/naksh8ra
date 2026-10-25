@@ -22,12 +22,17 @@ const schema = z.object({
   PRIVILEGED_SESSION_TTL_HOURS: z.coerce.number().default(12),
 
   // AI providers
-  LLM_PROVIDER: z.enum(["anthropic", "openai", "fixture", "none"]).default("none"),
+  // Deployment default for platform-funded AI. Organisations still need an explicit
+  // platform grant (per provider + capability) to use any deployment credential.
+  LLM_PROVIDER: z.enum(["anthropic", "openai", "gemini", "fixture", "none"]).default("none"),
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default("claude-opus-5-5"),
   ANTHROPIC_FAST_MODEL: z.string().default("claude-haiku-5-5"),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().default("gpt-4.1"),
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_FAST_MODEL: z.string().default("gemini-2.5-flash-lite"),
   STT_PROVIDER: z.enum(["openai", "deepgram", "fixture", "none"]).default("none"),
   DEEPGRAM_API_KEY: z.string().optional(),
   OPENAI_STT_MODEL: z.string().default("whisper-1"),

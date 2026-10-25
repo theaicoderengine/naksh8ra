@@ -6,7 +6,7 @@ import { AppError, notFound } from "../errors";
 import { storeFile, readFile, deleteStoredFile } from "./files";
 import { RESUME_TYPES } from "../providers/scan";
 import { enqueue } from "../queue";
-import { llm } from "../providers/llm";
+import { aiJson } from "../ai/access";
 import { RESUME_SYSTEM, ResumeSchema, inputBlock, RESUME_PROMPT_VERSION, type ParsedResume } from "../ai/prompts";
 import { logger } from "../logger";
 
@@ -69,12 +69,12 @@ export async function parseResume(resumeVersionId: string) {
     let parsed: ParsedResume = heuristicParse(text);
     const warnings: string[] = [];
     try {
-      const res = await llm().json({
+      // Student-owned resume: personal scope (platform grant for personal accounts), user id from the DB row.
+      const res = await aiJson({ kind: "PERSONAL", userId: rv.userId }, "RESUME_PARSING", {
         purpose: RESUME_PROMPT_VERSION,
         system: RESUME_SYSTEM,
         user: `Extract structured fields from this resume.\n${inputBlock({ text })}`,
         schema: ResumeSchema,
-        usage: { userId: rv.userId },
         fast: true,
         effort: "low",
       });

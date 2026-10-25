@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { prisma } from "../db/client";
 import { AppError, invalidState, notFound } from "../errors";
-import { llm } from "../providers/llm";
-import { sttProvider, ttsProvider } from "../providers/speech";
+import { aiJson, aiTranscribe, assertAiAvailable } from "../ai/access";
 import { PRACTICE_FB_SYSTEM, PRACTICE_FB_VERSION, PRACTICE_Q_SYSTEM, PRACTICE_Q_VERSION, PracticeFeedbackSchema, PracticeQuestionsSchema, inputBlock } from "../ai/prompts";
 import { grant, reserve, consume, release, balance } from "../billing/credits";
 import { enqueue } from "../queue";
@@ -42,30 +41,24 @@ export async function practiceBalance(userId: string) {
 }
 
 export async function startPractice(userId: string, input: z.infer<typeof startPracticeSchema>) {
-  const provider = llm(); // fail fast if AI is not configured
-  if (input.mode === "STRUCTURED_AUDIO" || input.mode === "REALTIME_CONVERSATIONAL") {
-    try {
-      sttProvider();
-    } catch {
-      /* typed answers remain available */
-    }
-  }
+  // Practice is personal: it runs only on platform AI granted to personal accounts. Fail fast.
+  const scope = { kind: "PERSONAL" as const, userId };
+  await assertAiAvailable(scope, "PRACTICE_COACHING");
   const active = await prisma.practiceInterview.count({ where: { userId, status: "IN_PROGRESS", startedAt: { gt: new Date(Date.now() - 2 * 3600_000) } } });
   if (active >= 2) throw invalidState("Finish or abandon your current practice session first");
   await ensureMonthlyPracticeAllowance(userId);
 
-  const res = await provider.json({
+  const res = await aiJson(scope, "PRACTICE_COACHING", {
     purpose: PRACTICE_Q_VERSION,
     system: PRACTICE_Q_SYSTEM,
     user: `Create ${input.questionCount} ${input.focus === "ROLE_SPECIFIC" ? "role-specific" : "general behavioural"} practice questions in language "${input.language}".\n${inputBlock({ role: input.targetRole, count: input.questionCount })}`,
     schema: PracticeQuestionsSchema,
-    usage: { userId },
     fast: true,
     effort: "low",
   });
   const questions = res.data.questions.slice(0, input.questionCount);
   const p = await prisma.practiceInterview.create({
-    data: { userId, ...input, questions, providerMode: provider.mode },
+    data: { userId, ...input, questions, providerMode: res.mode },
   });
   try {
     await prisma.$transaction((tx) => reserve(tx, { userId }, `practice:${p.id}`, p.id));
@@ -82,7 +75,7 @@ export async function getPractice(userId: string, id: string) {
   const p = await prisma.practiceInterview.findFirst({ where: { id, userId }, include: { answers: { orderBy: { position: "asc" } }, feedback: true } });
   if (!p) throw notFound("Practice session");
   const questions = p.questions as string[];
-  return { ...p, questions, currentQuestion: p.status === "IN_PROGRESS" ? (questions[p.currentIndex] ?? null) : null, ttsMode: ttsProvider().name === "browser" ? "browser" : "server" };
+  return { ...p, questions, currentQuestion: p.status === "IN_PROGRESS" ? (questions[p.currentIndex] ?? null) : null, ttsMode: "browser" as const }; // practice uses the browser's own voice
 }
 
 export async function listPractice(userId: string) {
@@ -101,7 +94,7 @@ export async function answerPractice(userId: string, id: string, payload: { audi
     const mime = sniffType(payload.audio, AUDIO_TYPES);
     if (!mime) throw new AppError("BAD_REQUEST", "Unsupported audio format");
     // Practice audio is transcribed and discarded — it is never stored.
-    transcript = (await sttProvider().transcribe(payload.audio, mime, p.language, { userId })).text;
+    transcript = (await aiTranscribe({ kind: "PERSONAL", userId, sessionId: null }, payload.audio, mime, p.language)).text;
   } else if (payload.text?.trim()) {
     transcript = payload.text.trim().slice(0, 8000);
   } else {
@@ -139,12 +132,11 @@ export async function generatePracticeFeedback(practiceId: string) {
   const p = await prisma.practiceInterview.findUnique({ where: { id: practiceId }, include: { answers: { orderBy: { position: "asc" } }, feedback: true } });
   if (!p || p.feedback) return;
   try {
-    const res = await llm().json({
+    const res = await aiJson({ kind: "PERSONAL", userId: p.userId }, "PRACTICE_COACHING", {
       purpose: PRACTICE_FB_VERSION,
       system: PRACTICE_FB_SYSTEM,
       user: `Give coaching feedback for this practice interview for the role "${p.targetRole}".\n${inputBlock({ answers: p.answers.map((a) => ({ position: a.position, question: a.question, answer: a.transcript })) })}`,
       schema: PracticeFeedbackSchema,
-      usage: { userId: p.userId },
       effort: "medium",
     });
     await prisma.practiceFeedback.create({
@@ -154,6 +146,7 @@ export async function generatePracticeFeedback(practiceId: string) {
     await prisma.practiceInterview.update({ where: { id: p.id }, data: { status: "FAILED" } });
     // The student is not charged for a session whose feedback could not be produced.
     await prisma.$transaction((tx) => grant(tx, { userId: p.userId }, 1, "ADJUSTMENT", `practice-refund:${p.id}`, { reason: "Feedback generation failed", reference: p.id }));
+    if (err instanceof AppError && ["PROVIDER_NOT_CONFIGURED", "AI_ACCESS_DENIED", "AI_LIMIT_REACHED", "PROVIDER_QUOTA_EXCEEDED"].includes(err.code)) return; // not transient
     throw err;
   }
 }

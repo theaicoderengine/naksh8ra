@@ -8,7 +8,7 @@ import type { OrgContext } from "../auth/context";
 import { canAccessJob } from "../auth/context";
 import { nextJobStatus, type JobAction } from "../domain/state-machines";
 import { slugify } from "@/lib/id";
-import { llm } from "../providers/llm";
+import { aiJson } from "../ai/access";
 import { JD_PROMPT_VERSION, JD_SYSTEM, JobDraftSchema, inputBlock } from "../ai/prompts";
 import type { RequestMeta } from "../http/route";
 
@@ -228,15 +228,14 @@ export const jdDraftSchema = z.object({
 /** AI-assisted draft — returned to the editor, never auto-published. */
 export async function draftJobDescription(ctx: OrgContext, input: z.infer<typeof jdDraftSchema>) {
   ctx.assert("jobs.create");
-  const res = await llm().json({
+  const res = await aiJson({ kind: "ORG", organisationId: ctx.org.id, userId: ctx.userId }, "JOB_DRAFTING", {
     purpose: JD_PROMPT_VERSION,
     system: JD_SYSTEM,
     user: `Draft a job description for ${ctx.org.name}.\n${inputBlock(input)}`,
     schema: JobDraftSchema,
-    usage: { organisationId: ctx.org.id, userId: ctx.userId },
     effort: "low",
   });
-  return { ...res.data, model: res.model, providerMode: llm().mode, promptVersion: JD_PROMPT_VERSION, requiresHumanReview: true };
+  return { ...res.data, model: res.model, providerMode: res.mode, aiSource: res.resolution.source, promptVersion: JD_PROMPT_VERSION, requiresHumanReview: true };
 }
 
 // ─────────────── Public / student discovery ───────────────

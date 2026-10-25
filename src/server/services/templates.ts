@@ -3,7 +3,7 @@ import { withOrg } from "../db/tenant";
 import { badRequest, conflict, notFound } from "../errors";
 import { audit } from "../audit";
 import type { OrgContext } from "../auth/context";
-import { llm } from "../providers/llm";
+import { aiJson } from "../ai/access";
 import { QGEN_PROMPT_VERSION, QGEN_SYSTEM, QuestionSetSchema, inputBlock } from "../ai/prompts";
 import { getEntitlements } from "../billing/entitlements";
 import type { RequestMeta } from "../http/route";
@@ -190,7 +190,7 @@ export async function generateQuestions(ctx: OrgContext, input: z.infer<typeof g
   ctx.assert("interviews.configure");
   const comps = await withOrg(ctx.org.id, ctx.userId, (tx) => tx.competency.findMany({ where: { id: { in: input.competencyIds }, organisationId: ctx.org.id }, include: { rubrics: { where: { isCurrent: true } } } }));
   if (!comps.length) throw notFound("Competency");
-  const res = await llm().json({
+  const res = await aiJson({ kind: "ORG", organisationId: ctx.org.id, userId: ctx.userId }, "QUESTION_GENERATION", {
     purpose: QGEN_PROMPT_VERSION,
     system: QGEN_SYSTEM,
     user: `Write ${input.count} interview questions in language "${input.language}".\n${inputBlock({
@@ -200,12 +200,12 @@ export async function generateQuestions(ctx: OrgContext, input: z.infer<typeof g
       competencies: comps.map((c) => ({ key: c.key, name: c.name, description: c.description, criteria: c.rubrics[0]?.criteria ?? [] })),
     })}`,
     schema: QuestionSetSchema,
-    usage: { organisationId: ctx.org.id, userId: ctx.userId },
     effort: "low",
   });
   const byKey = new Map(comps.map((c) => [c.key, c.id]));
   return {
-    providerMode: llm().mode,
+    providerMode: res.mode,
+    aiSource: res.resolution.source,
     questions: res.data.questions.slice(0, input.count).map((q) => ({ prompt: q.prompt, guidance: q.guidance, competencyId: byKey.get(q.competencyKey) ?? comps[0].id })),
   };
 }

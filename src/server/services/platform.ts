@@ -5,7 +5,7 @@ import { badRequest, conflict, forbidden, notFound } from "../errors";
 import { audit } from "../audit";
 import type { SessionInfo } from "../auth/session";
 import { adjust, balance } from "../billing/credits";
-import { llmStatus } from "../providers/llm";
+import { deploymentAiStatus } from "../ai/access";
 import { speechStatus } from "../providers/speech";
 import { env } from "../env";
 import { getRedis } from "../queue/redis";
@@ -213,7 +213,7 @@ export async function providerHealth() {
     database: { ok: dbOk },
     redis: { configured: !!redis, ok: redisOk },
     queue: { mode: e.QUEUE_MODE, staleQueued: queueBacklog },
-    llm: llmStatus(),
+    llm: deploymentAiStatus(),
     speech: speechStatus(),
     email: { provider: e.EMAIL_PROVIDER, last7Days: emailStats },
     payments: { provider: e.PAYMENT_PROVIDER, configured: e.PAYMENT_PROVIDER === "stripe" && !!e.STRIPE_SECRET_KEY, webhookSecretConfigured: !!e.STRIPE_WEBHOOK_SECRET },

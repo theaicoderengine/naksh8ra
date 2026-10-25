@@ -66,3 +66,37 @@ export async function tokenFromEmail(to: string, re: RegExp) {
   }
   throw new Error(`no matching email to ${to}`);
 }
+
+/**
+ * Grant platform AI the way production does it: a super-admin (MFA-verified session)
+ * calls the platform service. Defaults to the deterministic FIXTURE provider.
+ */
+export async function grantPlatformAi(
+  subject: string,
+  capabilities: string[],
+  opts: { provider?: string; enabled?: boolean; allowedModels?: string[]; monthlyRequestLimit?: number | null; monthlyTokenLimit?: number | null } = {},
+) {
+  const { setAiGrants } = await import("@/server/services/ai-admin");
+  const admin = await makeUser({ platformRole: "SUPER_ADMIN" });
+  const s = await sessionFor(admin.id, true);
+  await setAiGrants(
+    s,
+    subject,
+    {
+      reason: "test grant",
+      grants: capabilities.map((capability) => ({
+        provider: (opts.provider ?? "FIXTURE") as never,
+        capability: capability as never,
+        enabled: opts.enabled ?? true,
+        allowedModels: opts.allowedModels ?? [],
+        monthlyRequestLimit: opts.monthlyRequestLimit ?? null,
+        monthlyTokenLimit: opts.monthlyTokenLimit ?? null,
+      })),
+    },
+    meta,
+  );
+  return s;
+}
+
+export const ORG_AI = ["JOB_DRAFTING", "QUESTION_GENERATION", "INTERVIEW_CONVERSATION", "ASSESSMENT", "TRANSCRIPTION"];
+export const PERSONAL_AI = ["RESUME_PARSING", "PRACTICE_COACHING", "TRANSCRIPTION"];

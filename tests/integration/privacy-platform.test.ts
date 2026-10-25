@@ -133,6 +133,9 @@ describe("6b. Real-time conversational interview mode", () => {
   it("runs a full conversation with server-enforced plan, captions and completion", async () => {
     process.env.EXPOSE_TEST_TOKENS = "true";
     const { ctx, org } = await makeOrg({ credits: 1 });
+    // No platform grant: this organisation runs the interview on its OWN key (BYOK).
+    const { saveOrgCredential } = await import("@/server/services/ai-settings");
+    await saveOrgCredential(ctx, "FIXTURE", { apiKey: "fixture-ok", model: "fixture-llm-v1" }, meta);
     await prisma.platformSetting.update({ where: { key: "entitlements.default" }, data: { value: { seats: "10", monthly_interview_credits: "0", "feature.realtime_interviews": "true" } } });
     const comps = await listCompetencies(ctx);
     const t = await saveTemplate(ctx, null, { name: "Live", mode: "REALTIME_CONVERSATIONAL", language: "en", durationMinutes: 20, questionCount: 2, difficulty: "INTERMEDIATE", questionSelection: "FIXED", maxFollowUps: 1, answerSeconds: 120, prepSeconds: 0, retakesAllowed: 0, recordAudio: false, storeTranscript: true, showTranscriptToCandidate: false, allowResume: true, accessibilityOptions: { allowTypedAnswers: true, extendedTimeMultiplier: 1, captions: true }, competencyIds: [comps[0].id, comps[1].id], questions: [{ prompt: "Tell me about yourself and a recent project.", competencyId: comps[0].id }, { prompt: "How did you solve a hard problem?", competencyId: comps[1].id }] }, meta);

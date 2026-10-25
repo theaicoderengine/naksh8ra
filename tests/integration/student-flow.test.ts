@@ -9,7 +9,8 @@ import { saveTemplate, listCompetencies } from "@/server/services/templates";
 import { inviteToInterview, resolveInterviewAccess, recordConsent, startInterview, submitStructuredAnswer, completeInterview } from "@/server/services/interviews";
 import { startPractice, answerPractice, completePractice, getPractice, practiceBalance, listPractice } from "@/server/services/practice";
 import { createCohort, inviteStudents, cohortMembers, cohortAnalytics, saveProgramme } from "@/server/services/universities";
-import { makeOrg, makeUser, sessionFor, meta, uid } from "../helpers";
+import { makeOrg, makeUser, sessionFor, meta, uid, grantPlatformAi, ORG_AI, PERSONAL_AI } from "../helpers";
+import { PERSONAL_SUBJECT } from "@/server/ai/catalog";
 
 describe("Journey: student portal, private practice, university cohort", () => {
   let employer: Awaited<ReturnType<typeof makeOrg>>;
@@ -23,6 +24,8 @@ describe("Journey: student portal, private practice, university cohort", () => {
   beforeAll(async () => {
     process.env.EXPOSE_TEST_TOKENS = "true";
     employer = await makeOrg({ credits: 5 });
+    await grantPlatformAi(employer.org.id, ORG_AI);
+    await grantPlatformAi(PERSONAL_SUBJECT, PERSONAL_AI);
     uni = await makeOrg({ type: "UNIVERSITY" });
     student = await makeUser({ firstName: "Sasha" });
     const base = { requiredQualifications: [], requiredSkills: ["SQL", "Python"], preferredSkills: ["Tableau"], remotePolicy: "REMOTE" as const, employmentType: "GRADUATE_PROGRAMME" as const, openings: 2, visibility: "PUBLIC" as const, campusHiring: true, eligibleDegrees: [], eligibleProgrammeIds: [], screeningQuestions: [{ id: "q1", question: "Why this role?", required: true }], aiDraftUsed: false };

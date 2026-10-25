@@ -7,7 +7,8 @@ import { WorkspaceShell } from "@/components/workspace/shell";
 import { UserMenu } from "@/components/app-shell/user-menu";
 import { NotificationsBell } from "@/components/app-shell/notifications-bell";
 import { Alert } from "@/components/ui/feedback";
-import { llmStatus } from "@/server/providers/llm";
+import { describeAi } from "@/server/ai/access";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -15,13 +16,13 @@ export default async function WorkspaceLayout({ children, params }: { children: 
   const { slug } = await params;
   const ctx = await requirePageOrg(slug);
   if (ctx.session.activeOrgId !== ctx.org.id) await prisma.session.update({ where: { id: ctx.session.id }, data: { activeOrgId: ctx.org.id } });
-  const [orgs, ent] = await Promise.all([listMyOrganisations(ctx.userId), getEntitlements(ctx.org.id)]);
-  const ai = llmStatus();
+  const [orgs, ent, ai] = await Promise.all([listMyOrganisations(ctx.userId), getEntitlements(ctx.org.id), ctx.org.type === "EMPLOYER" ? describeAi({ kind: "ORG", organisationId: ctx.org.id }, "ASSESSMENT") : null]);
+  const canManageAi = ctx.permissions.has("ai.manage");
   const u = ctx.session.user;
   const banners = [] as React.ReactNode[];
   if (ent.status === "PAST_DUE") banners.push(<Alert key="pd" tone="danger" title="Payment failed">Update your payment method in Billing to avoid interruption.</Alert>);
-  if (!ai.configured && ctx.org.type === "EMPLOYER") banners.push(<Alert key="ai" tone="warning" title="AI provider not configured">AI interviews, assessments and drafting are unavailable until a platform administrator configures an AI provider. Nothing is simulated.</Alert>);
-  if (ai.configured && ai.mode === "FIXTURE") banners.push(<Alert key="fx" tone="warning" title="Test mode: fixture AI provider">This deployment uses deterministic test fixtures instead of a real AI model. Results are labelled FIXTURE and must not be used for hiring.</Alert>);
+  if (ai && !ai.available) banners.push(<Alert key="ai" tone="warning" title="AI is not set up for this organisation">AI assessments are unavailable: {ai.message} {canManageAi && <Link className="font-medium underline" href={`/w/${ctx.org.slug}/settings/ai`}>Open AI provider settings</Link>} Nothing is simulated.</Alert>);
+  if (ai?.available && ai.resolution?.mode === "FIXTURE") banners.push(<Alert key="fx" tone="warning" title="Test mode: fixture AI provider">This deployment uses deterministic test fixtures instead of a real AI model. Results are labelled FIXTURE and must not be used for hiring.</Alert>);
   return (
     <OrgProvider value={{ slug: ctx.org.slug, name: ctx.org.name, type: ctx.org.type, role: ctx.roleKey, permissions: [...ctx.permissions] }}>
       <WorkspaceShell

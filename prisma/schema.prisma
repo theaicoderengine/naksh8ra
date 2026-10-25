@@ -180,6 +180,43 @@ enum ProviderMode {
   FIXTURE
 }
 
+// ───────────── AI provider access (platform grants + organisation BYOK) ─────────────
+enum AiProvider {
+  ANTHROPIC
+  OPENAI
+  GEMINI
+  DEEPGRAM
+  ELEVENLABS
+  FIXTURE
+}
+
+enum AiCapability {
+  JOB_DRAFTING
+  RESUME_PARSING
+  QUESTION_GENERATION
+  INTERVIEW_CONVERSATION
+  ASSESSMENT
+  PRACTICE_COACHING
+  TRANSCRIPTION
+  SPEECH_SYNTHESIS
+}
+
+enum AiCredentialSource {
+  ORGANISATION
+  PLATFORM
+}
+
+enum AiCredentialStatus {
+  ACTIVE
+  INVALID
+}
+
+enum AiRequestStatus {
+  SUCCEEDED
+  FAILED
+  DENIED
+}
+
 enum AssessmentStatus {
   PENDING
   COMPLETED
@@ -500,6 +537,9 @@ model Organisation {
   retentionPolicies   RetentionPolicy[]
   supportTickets      SupportTicket[]
   supportGrants       SupportAccessGrant[]
+  aiGrants            PlatformAiGrant[]
+  aiCredentials       OrgAiCredential[]
+  aiRoutes            OrgAiRoute[]
 }
 
 model OrganisationMembership {
@@ -1607,6 +1647,108 @@ model UsageRecord {
 
   @@index([organisationId, createdAt])
   @@index([kind, createdAt])
+}
+
+/// Platform super-admin permission for a subject (an organisation, or "PERSONAL" for
+/// student/personal accounts) to use a platform-owned (deployment) credential for one
+/// provider + capability. No row (or enabled=false) means no access.
+model PlatformAiGrant {
+  id                  String        @id @default(cuid())
+  subject             String // organisation id, or "PERSONAL"
+  organisationId      String?
+  organisation        Organisation? @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  provider            AiProvider
+  capability          AiCapability
+  enabled             Boolean       @default(true)
+  allowedModels       String[]      @default([]) // empty = deployment default model only
+  monthlyRequestLimit Int?
+  monthlyTokenLimit   Int?
+  version             Int           @default(1)
+  grantedById         String?
+  updatedById         String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  @@unique([subject, provider, capability])
+  @@index([organisationId])
+}
+
+/// Organisation-owned API key (bring your own key). The key is AES-256-GCM encrypted;
+/// only masked metadata ever leaves the server.
+model OrgAiCredential {
+  id              String             @id @default(cuid())
+  organisationId  String
+  organisation    Organisation       @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  provider        AiProvider
+  encryptedKey    String
+  keyLast4        String
+  keyFingerprint  String
+  model           String
+  status          AiCredentialStatus @default(ACTIVE)
+  version         Int                @default(1)
+  lastValidatedAt DateTime?
+  lastError       String?
+  lastErrorAt     DateTime?
+  createdById     String?
+  updatedById     String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@unique([organisationId, provider])
+  @@unique([id, organisationId])
+}
+
+/// Organisation's explicit choice of credential source/provider for a capability.
+model OrgAiRoute {
+  id             String             @id @default(cuid())
+  organisationId String
+  organisation   Organisation       @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  capability     AiCapability
+  source         AiCredentialSource
+  provider       AiProvider
+  model          String? // preferred model for PLATFORM routes (must be allowed by the grant)
+  updatedById    String?
+  updatedAt      DateTime           @updatedAt
+
+  @@unique([organisationId, capability])
+}
+
+/// Atomic per-period counters enforcing platform-funded usage limits.
+model AiUsageCounter {
+  id         String       @id @default(cuid())
+  subject    String
+  provider   AiProvider
+  capability AiCapability
+  period     String // YYYY-MM (UTC)
+  requests   Int          @default(0)
+  tokens     Int          @default(0)
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([subject, provider, capability, period])
+}
+
+/// One row per AI operation attempt (success, failure or denial). No prompts or outputs are stored.
+model AiRequestLog {
+  id                  String             @id @default(cuid())
+  organisationId      String?
+  userId              String?
+  sessionId           String?
+  capability          AiCapability
+  provider            AiProvider?
+  model               String?
+  source              AiCredentialSource?
+  credentialId        String?
+  credentialVersion   Int?
+  status              AiRequestStatus
+  errorCode           String?
+  inputTokens         Int?
+  outputTokens        Int?
+  estimatedCostMicros Int? // estimate from configured price table; NOT provider billing
+  latencyMs           Int?
+  createdAt           DateTime           @default(now())
+
+  @@index([organisationId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model CheckoutSession {

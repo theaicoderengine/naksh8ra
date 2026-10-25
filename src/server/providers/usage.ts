@@ -47,3 +47,15 @@ export async function recordUsage(u: UsageCtx & { kind: "LLM" | "STT" | "TTS" | 
     logger.warn({ err }, "usage record failed");
   }
 }
+
+/**
+ * Estimated cost of one LLM call in micro-USD, or null when no price is configured for
+ * this provider/model (we do not guess). This is an internal estimate, never provider billing.
+ */
+export function estimateLlmCostMicros(provider: string, model: string, inputTokens: number | null, outputTokens: number | null): number | null {
+  const p = prices();
+  const inP = p[`${provider}:${model}:input_tokens`];
+  const outP = p[`${provider}:${model}:output_tokens`];
+  if (inP === undefined || outP === undefined) return null;
+  return Math.round(inP * (inputTokens ?? 0) + outP * (outputTokens ?? 0));
+}
