@@ -51,6 +51,10 @@ export async function runHandler<N extends JobName>(name: N, payload: JobPayload
       await retryFailedPaymentEvents();
       return r;
     }
+    case "ai.reservations.sweep": {
+      const { sweepExpiredReservations } = await import("../ai/access");
+      return sweepExpiredReservations();
+    }
     default:
       throw new Error(`Unknown job ${String(name)}`);
   }

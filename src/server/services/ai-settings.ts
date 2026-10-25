@@ -157,7 +157,7 @@ export async function testNewKey(ctx: OrgContext, providerRaw: string, raw: z.in
   const input = testKeySchema.parse(raw);
   const provider = assertByokProvider(providerRaw);
   assertSupportedModel(provider, input.model);
-  await rateLimit("ai", `keytest:${ctx.org.id}`);
+  await rateLimit("aiKeyTest", ctx.org.id);
   return connectionTest(provider, input.apiKey, input.model);
 }
 
@@ -170,7 +170,7 @@ export async function saveOrgCredential(ctx: OrgContext, providerRaw: string, ra
   const input = credentialSchema.parse(raw);
   const provider = assertByokProvider(providerRaw);
   assertSupportedModel(provider, input.model);
-  await rateLimit("ai", `keytest:${ctx.org.id}`);
+  await rateLimit("aiKeyTest", ctx.org.id);
   const existing = await withOrg(ctx.org.id, ctx.userId, (tx) => tx.orgAiCredential.findUnique({ where: { organisationId_provider: { organisationId: ctx.org.id, provider } } }));
   if (!input.apiKey && !existing) throw badRequest("Enter an API key to connect this provider");
   const apiKey = input.apiKey ?? decrypt(existing!.encryptedKey);
@@ -198,7 +198,7 @@ export async function saveOrgCredential(ctx: OrgContext, providerRaw: string, ra
 export async function testOrgCredential(ctx: OrgContext, providerRaw: string) {
   ctx.assert("ai.manage");
   const provider = assertByokProvider(providerRaw);
-  await rateLimit("ai", `keytest:${ctx.org.id}`);
+  await rateLimit("aiKeyTest", ctx.org.id);
   const c = await withOrg(ctx.org.id, ctx.userId, (tx) => tx.orgAiCredential.findUnique({ where: { organisationId_provider: { organisationId: ctx.org.id, provider } } }));
   if (!c) throw notFound("AI provider connection");
   const test = await connectionTest(provider, decrypt(c.encryptedKey), c.model);

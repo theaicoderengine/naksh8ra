@@ -104,6 +104,7 @@ export async function processDeletion(requestId: string) {
       await tx.user.update({ where: { id: userId }, data: { email: anonEmail, passwordHash: null, mfaSecret: null, mfaEnabledAt: null, status: "DELETED" } });
     });
     await revokeAllSessions(userId, "account_deleted");
+    await withSystem("dsr pseudonymise ai logs", (tx) => tx.aiRequestLog.updateMany({ where: { userId }, data: { userId: null } }));
     for (const c of candidates) {
       await withSystem("dsr unlink candidate", async (tx) => {
         await tx.candidate.update({ where: { id: c.id }, data: { userId: null } });
@@ -223,6 +224,8 @@ export async function retentionSweep(now = new Date()) {
       logger.error({ err, org: org.id }, "retention sweep failed for organisation");
     }
   }
+  // AI request logs hold metadata only (no prompts/outputs); keep 400 days for usage and billing review.
+  summary.aiRequestLogs = (await withPurge("retention ai request log", (tx) => tx.aiRequestLog.deleteMany({ where: { createdAt: { lt: new Date(now.getTime() - 400 * 86400_000) } } }))).count;
   // Generated exports expire after 7 days.
   const exports = await prisma.storedFile.findMany({ where: { purpose: "EXPORT", deletedAt: null, createdAt: { lt: new Date(now.getTime() - 7 * 86400_000) } } });
   for (const f of exports) await deleteStoredFile(f.id);

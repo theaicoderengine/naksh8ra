@@ -3,7 +3,9 @@ import { decrypt } from "../auth/crypto";
 import { withOrg, withSystem, type Tx } from "../db/tenant";
 import { AppError } from "../errors";
 import { logger } from "../logger";
-import { createLlmAdapter, scrubSecrets, type JsonRequest, type TextRequest, type TokenUsage } from "../providers/llm";
+import { createLlmAdapter, isRetryable, maxOutputTokens, scrubSecrets, type JsonRequest, type TextRequest, type TokenUsage } from "../providers/llm";
+import { createId } from "../../lib/id";
+import { env } from "../env";
 import { sttProvider, ttsProvider, type Transcription } from "../providers/speech";
 import { estimateLlmCostMicros, recordUsage } from "../providers/usage";
 import {
@@ -120,7 +122,15 @@ async function resolvePlatform(scope: AiScope, capability: AiCapability, provide
 function fromOrgCredential(capability: AiCapability, c: { id: string; provider: AiProvider; encryptedKey: string; model: string; version: number }): Resolved {
   const provider = c.provider as LlmProviderId;
   if (!findModel(provider, c.model)) throw new AppError("PROVIDER_NOT_CONFIGURED", `The model "${c.model}" selected for your ${PROVIDER_LABEL[provider]} key is no longer supported. Choose another model in Settings → AI Providers.`, { reason: "unsupported_model" });
-  return { capability, provider, model: c.model, source: "ORGANISATION", credentialId: c.id, credentialVersion: c.version, grantId: null, mode: provider === "FIXTURE" ? "FIXTURE" : "LIVE", apiKey: decrypt(c.encryptedKey) };
+  let apiKey: string;
+  try {
+    apiKey = decrypt(c.encryptedKey);
+  } catch {
+    // e.g. ENCRYPTION_KEY changed without re-encrypting stored keys. Never fall back.
+    logger.error({ credentialId: c.id, provider }, "organisation AI key could not be decrypted");
+    throw new AppError("PROVIDER_NOT_CONFIGURED", `Your organisation's ${PROVIDER_LABEL[provider]} key can no longer be read by the platform. Reconnect it in Settings → AI Providers.`, { reason: "undecryptable" });
+  }
+  return { capability, provider, model: c.model, source: "ORGANISATION", credentialId: c.id, credentialVersion: c.version, grantId: null, mode: provider === "FIXTURE" ? "FIXTURE" : "LIVE", apiKey };
 }
 
 /** Resolve (without calling) the provider for a text capability. Throws when nothing is authorised. */
@@ -153,39 +163,112 @@ async function resolveText(scope: AiScope, capability: TextCapability, fast = fa
 // ───────────────────────── Platform usage limits ─────────────────────────
 
 /**
- * Atomically re-check the grant and reserve one request against its monthly limits.
- * The conditional UPDATE serialises concurrent requests on the counter row, so parallel
- * calls (or retries) cannot exceed the limit. Each operation reserves once; SDK-level
- * retries of a transient error happen inside that single reservation.
+ * Platform-funded usage is enforced with per-attempt reservations:
+ *
+ *   reserve  (one transaction, before the provider call)
+ *     - re-check the grant (still enabled, model still permitted) under a row lock;
+ *     - conditional UPDATE of the counter: requests + 1 and tokensReserved + estimate,
+ *       only if  requests < requestLimit  AND  tokens + tokensReserved + estimate <= tokenLimit;
+ *     - insert an AiUsageReservation row.
+ *   settle   (after success, failure or timeout — exactly once per reservation)
+ *     - delete the reservation; tokensReserved − estimate; tokens + actual usage.
+ *   sweep    (worker, for reservations orphaned by a crash)
+ *     - after expiresAt, charge the estimate (conservative) and mark it expired; a late
+ *       settle then corrects tokens by (actual − estimate).
+ *
+ * The estimate is the worst case (prompt size + the request's output cap), so concurrent
+ * attempts can never push settled + in-flight usage past the token limit, and each retry
+ * is a new attempt with its own reservation.
  */
-async function reservePlatform(scope: AiScope, r: { provider: AiProvider; capability: AiCapability }) {
+const RESERVATION_GRACE_MS = 60_000;
+
+export function estimateReservationTokens(provider: LlmProviderId, kind: "json" | "text", req: { system: string; user?: string; messages?: { content: string }[]; maxTokens?: number }) {
+  const promptBytes = Buffer.byteLength(req.system) + Buffer.byteLength(req.user ?? "") + (req.messages ?? []).reduce((n, m) => n + Buffer.byteLength(m.content), 0);
+  // ~3 bytes per token is a conservative (over-)estimate for typical tokenizers.
+  return Math.ceil(promptBytes / 3) + maxOutputTokens(provider, kind, req.maxTokens);
+}
+
+type Reservation = { id: string; tokens: number };
+
+async function reservePlatform(scope: AiScope, r: { provider: AiProvider; capability: AiCapability; model?: string | null }, estimate: number): Promise<Reservation> {
   const subject = subjectOf(scope);
   const per = period();
-  await withSystem("ai: reserve platform usage", async (tx) => {
-    const g = await tx.$queryRaw<{ id: string; monthlyRequestLimit: number | null; monthlyTokenLimit: number | null }[]>`
-      SELECT id, "monthlyRequestLimit", "monthlyTokenLimit" FROM "PlatformAiGrant"
+  return withSystem("ai: reserve platform usage", async (tx) => {
+    const g = await tx.$queryRaw<{ id: string; monthlyRequestLimit: number | null; monthlyTokenLimit: number | null; allowedModels: string[] }[]>`
+      SELECT id, "monthlyRequestLimit", "monthlyTokenLimit", "allowedModels" FROM "PlatformAiGrant"
       WHERE subject = ${subject} AND provider = ${r.provider}::"AiProvider" AND capability = ${r.capability}::"AiCapability" AND enabled
       FOR SHARE`;
     if (!g[0]) throw denied(r.capability, scope); // revoked since resolution
+    if (r.model && isLlmProvider(r.provider)) {
+      const permitted = g[0].allowedModels.length ? g[0].allowedModels.includes(r.model) : [deploymentDefaultModel(r.provider, false), deploymentDefaultModel(r.provider, true)].includes(r.model);
+      if (!permitted) throw new AppError("AI_ACCESS_DENIED", `The model "${r.model}" is no longer permitted for platform AI on this organisation.`, { reason: "model_not_permitted" });
+    }
     await tx.$executeRaw`
-      INSERT INTO "AiUsageCounter" (id, subject, provider, capability, period, requests, tokens, "updatedAt")
-      VALUES (${`auc_${subject}_${r.provider}_${r.capability}_${per}`.slice(0, 190)}, ${subject}, ${r.provider}::"AiProvider", ${r.capability}::"AiCapability", ${per}, 0, 0, now())
+      INSERT INTO "AiUsageCounter" (id, subject, provider, capability, period, requests, tokens, "tokensReserved", "updatedAt")
+      VALUES (${`auc_${subject}_${r.provider}_${r.capability}_${per}`.slice(0, 190)}, ${subject}, ${r.provider}::"AiProvider", ${r.capability}::"AiCapability", ${per}, 0, 0, 0, now())
       ON CONFLICT (subject, provider, capability, period) DO NOTHING`;
     const n = await tx.$executeRaw`
-      UPDATE "AiUsageCounter" SET requests = requests + 1, "updatedAt" = now()
+      UPDATE "AiUsageCounter" SET requests = requests + 1, "tokensReserved" = "tokensReserved" + ${estimate}, "updatedAt" = now()
       WHERE subject = ${subject} AND provider = ${r.provider}::"AiProvider" AND capability = ${r.capability}::"AiCapability" AND period = ${per}
         AND (${g[0].monthlyRequestLimit}::int IS NULL OR requests < ${g[0].monthlyRequestLimit}::int)
-        AND (${g[0].monthlyTokenLimit}::int IS NULL OR tokens < ${g[0].monthlyTokenLimit}::int)`;
+        AND (${g[0].monthlyTokenLimit}::int IS NULL OR tokens + "tokensReserved" + ${estimate} <= ${g[0].monthlyTokenLimit}::int)`;
     if (n === 0) throw new AppError("AI_LIMIT_REACHED", `The platform AI usage limit for ${CAPABILITY_INFO[r.capability].label} has been reached for this month. Contact the platform administrator, or connect your organisation's own provider key.`, { capability: r.capability });
+    const id = createId();
+    await tx.aiUsageReservation.create({ data: { id, subject, provider: r.provider, capability: r.capability, period: per, tokens: estimate, expiresAt: new Date(Date.now() + 2 * env().AI_TIMEOUT_MS + RESERVATION_GRACE_MS) } });
+    return { id, tokens: estimate };
   });
 }
 
-async function addPlatformTokens(scope: AiScope, r: { provider: AiProvider; capability: AiCapability }, tokens: number) {
-  if (!tokens) return;
-  await withSystem("ai: platform token usage", (tx) =>
-    tx.$executeRaw`UPDATE "AiUsageCounter" SET tokens = tokens + ${Math.round(tokens)}, "updatedAt" = now()
-      WHERE subject = ${subjectOf(scope)} AND provider = ${r.provider}::"AiProvider" AND capability = ${r.capability}::"AiCapability" AND period = ${period()}`,
-  ).catch((err) => logger.warn({ err: (err as Error).message }, "ai token counter update failed"));
+/** Settle a reservation with actual usage. Idempotent: a second settle is a no-op. */
+async function settleReservation(res: Reservation, actualTokens: number) {
+  const actual = Math.max(0, Math.round(actualTokens));
+  await withSystem("ai: settle platform usage", async (tx) => {
+    const rows = await tx.$queryRaw<{ subject: string; provider: AiProvider; capability: AiCapability; period: string; tokens: number; expiredAt: Date | null }[]>`
+      DELETE FROM "AiUsageReservation" WHERE id = ${res.id} RETURNING subject, provider, capability, period, tokens, "expiredAt"`;
+    const row = rows[0];
+    if (!row) return;
+    if (row.expiredAt) {
+      // The sweeper already charged the estimate; correct it to the actual usage.
+      await tx.$executeRaw`UPDATE "AiUsageCounter" SET tokens = GREATEST(tokens + ${actual - row.tokens}, 0), "updatedAt" = now()
+        WHERE subject = ${row.subject} AND provider = ${row.provider}::"AiProvider" AND capability = ${row.capability}::"AiCapability" AND period = ${row.period}`;
+    } else {
+      await tx.$executeRaw`UPDATE "AiUsageCounter" SET "tokensReserved" = GREATEST("tokensReserved" - ${row.tokens}, 0), tokens = tokens + ${actual}, "updatedAt" = now()
+        WHERE subject = ${row.subject} AND provider = ${row.provider}::"AiProvider" AND capability = ${row.capability}::"AiCapability" AND period = ${row.period}`;
+    }
+  }).catch((err) => logger.error({ err: (err as Error).message, reservation: res.id }, "ai reservation settle failed (will be swept)"));
+}
+
+/**
+ * Worker: charge reservations whose process never settled them (crash, kill, lost
+ * connection). Conservative: the full estimate is charged; a late settle corrects it.
+ */
+export async function sweepExpiredReservations(now = new Date()) {
+  return withSystem("ai: sweep expired reservations", async (tx) => {
+    const expired = await tx.$queryRaw<{ id: string }[]>`
+      WITH x AS (
+        UPDATE "AiUsageReservation" SET "expiredAt" = ${now} WHERE "expiredAt" IS NULL AND "expiresAt" < ${now} RETURNING id, subject, provider, capability, period, tokens
+      ), agg AS (
+        SELECT subject, provider, capability, period, SUM(tokens)::int AS t FROM x GROUP BY 1, 2, 3, 4
+      ), upd AS (
+        UPDATE "AiUsageCounter" c SET "tokensReserved" = GREATEST(c."tokensReserved" - agg.t, 0), tokens = c.tokens + agg.t, "updatedAt" = now()
+        FROM agg WHERE c.subject = agg.subject AND c.provider = agg.provider AND c.capability = agg.capability AND c.period = agg.period
+        RETURNING c.id
+      )
+      SELECT id FROM x`;
+    const purged = await tx.aiUsageReservation.deleteMany({ where: { expiredAt: { lt: new Date(now.getTime() - 7 * 86400_000) } } });
+    if (expired.length) logger.warn({ count: expired.length }, "charged expired AI usage reservations");
+    return { expired: expired.length, purged: purged.count };
+  });
+}
+
+/** Tokens to charge when an attempt failed, by what the provider may have processed. */
+function chargeForFailure(e: AppError, estimate: number, inputEstimate: number) {
+  const usage = (e.details as { usage?: TokenUsage } | undefined)?.usage;
+  if (usage && (usage.inputTokens != null || usage.outputTokens != null)) return (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+  const reason = (e.details as { reason?: string } | undefined)?.reason;
+  // Timeouts / 5xx: the provider may have processed the prompt — charge the input estimate.
+  if (reason === "timeout" || reason === "unavailable") return Math.min(inputEstimate, estimate);
+  return 0; // rejected before processing (auth, quota, bad request, unknown model)
 }
 
 // ───────────────────────── Request log ─────────────────────────
@@ -199,6 +282,7 @@ type LogEntry = {
   usage?: TokenUsage | null;
   errorCode?: string | null;
   startedAt: number;
+  attempt?: number;
 };
 
 async function logRequest(e: LogEntry) {
@@ -224,6 +308,7 @@ async function logRequest(e: LogEntry) {
           outputTokens: e.usage?.outputTokens ?? null,
           estimatedCostMicros: cost,
           latencyMs: Date.now() - e.startedAt,
+          attempt: e.attempt ?? 1,
         },
       }),
     );
@@ -257,45 +342,66 @@ function publicResolution(r: Resolved): AiResolution {
   return { capability: r.capability, provider: r.provider, model: r.model, source: r.source, credentialId: r.credentialId, credentialVersion: r.credentialVersion, grantId: r.grantId, mode: r.mode };
 }
 
-async function run<T>(scope: AiScope, capability: TextCapability, fast: boolean, call: (r: Resolved) => Promise<{ value: T; model: string; usage: TokenUsage }>) {
-  const startedAt = Date.now();
-  let r: Resolved;
-  try {
-    r = await resolveText(scope, capability, fast);
-    if (r.source === "PLATFORM") await reservePlatform(scope, r);
-  } catch (err) {
-    const code = err instanceof AppError ? err.code : "INTERNAL";
-    await logRequest({ scope, capability, status: code === "AI_ACCESS_DENIED" || code === "AI_LIMIT_REACHED" ? "DENIED" : "FAILED", errorCode: code, startedAt });
-    throw err;
-  }
-  try {
-    const out = await call(r);
-    await logRequest({ scope, capability, status: "SUCCEEDED", r, model: out.model, usage: out.usage, startedAt });
-    if (r.source === "PLATFORM") await addPlatformTokens(scope, r, (out.usage.inputTokens ?? 0) + (out.usage.outputTokens ?? 0));
-    return { value: out.value, model: out.model, resolution: publicResolution(r) };
-  } catch (err) {
-    const e = err instanceof AppError ? err : new AppError("PROVIDER_ERROR", "AI request failed");
-    const usage = (e.details as { usage?: TokenUsage } | undefined)?.usage ?? null;
-    await logRequest({ scope, capability, status: "FAILED", r, usage, errorCode: (e.details as { reason?: string } | undefined)?.reason ?? e.code, startedAt });
-    if (r.source === "PLATFORM" && usage) await addPlatformTokens(scope, r, (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0));
-    await noteCredentialError(scope, r, e);
-    throw e;
+async function run<T>(
+  scope: AiScope,
+  capability: TextCapability,
+  kind: "json" | "text",
+  req: { system: string; user?: string; messages?: { content: string }[]; maxTokens?: number; fast?: boolean },
+  call: (r: Resolved, maxTokens: number) => Promise<{ value: T; model: string; usage: TokenUsage }>,
+) {
+  const attempts = 1 + Math.max(0, env().AI_MAX_RETRIES);
+  for (let attempt = 1; ; attempt++) {
+    const startedAt = Date.now();
+    let r: Resolved;
+    let reservation: Reservation | null = null;
+    let estimate = 0;
+    let inputEstimate = 0;
+    try {
+      // Re-resolved on every attempt: a revoked grant, removed key or rotation applies immediately.
+      r = await resolveText(scope, capability, !!req.fast);
+      estimate = estimateReservationTokens(r.provider, kind, req);
+      inputEstimate = estimate - maxOutputTokens(r.provider, kind, req.maxTokens);
+      if (r.source === "PLATFORM") reservation = await reservePlatform(scope, r, estimate);
+    } catch (err) {
+      const code = err instanceof AppError ? err.code : "INTERNAL";
+      await logRequest({ scope, capability, status: code === "AI_ACCESS_DENIED" || code === "AI_LIMIT_REACHED" ? "DENIED" : "FAILED", errorCode: code, startedAt, attempt });
+      throw err;
+    }
+    try {
+      const out = await call(r, maxOutputTokens(r.provider, kind, req.maxTokens));
+      const used = (out.usage.inputTokens ?? 0) + (out.usage.outputTokens ?? 0);
+      if (reservation) await settleReservation(reservation, out.usage.inputTokens == null && out.usage.outputTokens == null ? estimate : used);
+      await logRequest({ scope, capability, status: "SUCCEEDED", r, model: out.model, usage: out.usage, startedAt, attempt });
+      return { value: out.value, model: out.model, resolution: publicResolution(r) };
+    } catch (err) {
+      const e = err instanceof AppError ? err : new AppError("PROVIDER_ERROR", "AI request failed", { reason: "unavailable" });
+      if (reservation) await settleReservation(reservation, chargeForFailure(e, estimate, inputEstimate));
+      const usage = (e.details as { usage?: TokenUsage } | undefined)?.usage ?? null;
+      await logRequest({ scope, capability, status: "FAILED", r, usage, errorCode: (e.details as { reason?: string } | undefined)?.reason ?? e.code, startedAt, attempt });
+      await noteCredentialError(scope, r, e);
+      // Transient errors only (5xx / timeouts) — never quota (429), auth or validation errors.
+      if (attempt < attempts && isRetryable(e)) {
+        await new Promise((res) => setTimeout(res, env().AI_RETRY_BASE_MS * 2 ** (attempt - 1)));
+        continue;
+      }
+      throw e;
+    }
   }
 }
 
 export async function aiJson<T>(scope: AiScope, capability: TextCapability, req: JsonRequest<T>) {
-  const out = await run(scope, capability, !!req.fast, async (r) => {
+  const out = await run(scope, capability, "json", req, async (r, maxTokens) => {
     const adapter = createLlmAdapter(r.provider, r.apiKey);
-    const res = await adapter.json(req, r.model);
+    const res = await adapter.json({ ...req, maxTokens }, r.model);
     return { value: res.data, model: res.model, usage: res.usage };
   });
   return { data: out.value, model: out.model, mode: out.resolution.mode, resolution: out.resolution };
 }
 
 export async function aiText(scope: AiScope, capability: TextCapability, req: TextRequest) {
-  const out = await run(scope, capability, !!req.fast, async (r) => {
+  const out = await run(scope, capability, "text", req, async (r, maxTokens) => {
     const adapter = createLlmAdapter(r.provider, r.apiKey);
-    const res = await adapter.text(req, r.model);
+    const res = await adapter.text({ ...req, maxTokens }, r.model);
     return { value: res.text, model: res.model, usage: res.usage };
   });
   return { text: out.value, model: out.model, mode: out.resolution.mode, resolution: out.resolution };
@@ -350,9 +456,10 @@ export async function aiTranscribe(scope: AiScope, audio: Buffer, mime: string, 
   const startedAt = Date.now();
   const capability = "TRANSCRIPTION" as const;
   let provider: AiProvider | null;
+  let reservation: Reservation | null = null;
   try {
     provider = await assertSpeechAvailable(scope, capability);
-    if (provider) await reservePlatform(scope, { provider, capability });
+    if (provider) reservation = await reservePlatform(scope, { provider, capability }, 0);
   } catch (err) {
     const code = err instanceof AppError ? err.code : "INTERNAL";
     await logRequest({ scope, capability, status: code === "AI_ACCESS_DENIED" || code === "AI_LIMIT_REACHED" ? "DENIED" : "FAILED", errorCode: code, startedAt });
@@ -361,9 +468,11 @@ export async function aiTranscribe(scope: AiScope, audio: Buffer, mime: string, 
   const r = { provider: provider ?? undefined, source: "PLATFORM" as const };
   try {
     const t = await sttProvider().transcribe(audio, mime, language, { organisationId: scope.kind === "ORG" ? scope.organisationId : null, userId: scope.userId ?? null, sessionId: scope.sessionId ?? null });
+    if (reservation) await settleReservation(reservation, 0);
     await logRequest({ scope, capability, status: "SUCCEEDED", r, model: t.provider, startedAt });
     return t;
   } catch (err) {
+    if (reservation) await settleReservation(reservation, 0);
     await logRequest({ scope, capability, status: "FAILED", r, errorCode: err instanceof AppError ? err.code : "PROVIDER_ERROR", startedAt });
     throw err;
   }
@@ -378,10 +487,11 @@ export async function aiSynthesize(scope: AiScope, text: string, voice: string |
   const startedAt = Date.now();
   const capability = "SPEECH_SYNTHESIS" as const;
   let provider: AiProvider | null;
+  let reservation: Reservation;
   try {
     provider = await assertSpeechAvailable(scope, capability);
     if (!provider) return null;
-    await reservePlatform(scope, { provider, capability });
+    reservation = await reservePlatform(scope, { provider, capability }, 0);
   } catch (err) {
     await logRequest({ scope, capability, status: "DENIED", errorCode: err instanceof AppError ? err.code : "INTERNAL", startedAt });
     return null;
@@ -389,9 +499,11 @@ export async function aiSynthesize(scope: AiScope, text: string, voice: string |
   const r = { provider, source: "PLATFORM" as const };
   try {
     const out = await ttsProvider().synthesize(text, voice, { organisationId: scope.kind === "ORG" ? scope.organisationId : null, userId: scope.userId ?? null, sessionId: scope.sessionId ?? null });
+    await settleReservation(reservation, 0);
     await logRequest({ scope, capability, status: "SUCCEEDED", r, startedAt });
     return out;
   } catch (err) {
+    await settleReservation(reservation, 0);
     await logRequest({ scope, capability, status: "FAILED", r, errorCode: err instanceof AppError ? err.code : "PROVIDER_ERROR", startedAt });
     throw err;
   }
@@ -403,4 +515,4 @@ export function deploymentAiStatus() {
   return { defaultProvider: deploymentDefaultProvider(), llm, transcription: deploymentSpeechProvider("TRANSCRIPTION"), speechSynthesis: deploymentSpeechProvider("SPEECH_SYNTHESIS") };
 }
 
-export const _test = { resolveText, period, subjectOf };
+export const _test = { resolveText, period, subjectOf, reservePlatform, settleReservation };

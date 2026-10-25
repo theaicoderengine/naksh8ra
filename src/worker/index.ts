@@ -15,6 +15,7 @@ const concurrency = Number(process.env.WORKER_CONCURRENCY ?? 8);
 
 const SCHEDULES: { name: JobName; pattern: string }[] = [
   { name: "sessions.timeout", pattern: "*/5 * * * *" },
+  { name: "ai.reservations.sweep", pattern: "*/10 * * * *" },
   { name: "interview.reminders", pattern: "0 * * * *" },
   { name: "retention.sweep", pattern: "30 3 * * *" },
   { name: "billing.reconcile", pattern: "15 * * * *" },

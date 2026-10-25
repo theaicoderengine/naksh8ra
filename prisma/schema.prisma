@@ -1720,11 +1720,29 @@ model AiUsageCounter {
   provider   AiProvider
   capability AiCapability
   period     String // YYYY-MM (UTC)
-  requests   Int          @default(0)
-  tokens     Int          @default(0)
+  requests   Int          @default(0) // attempts that reached (or were reserved for) the provider
+  tokens     Int          @default(0) // settled token usage
+  tokensReserved Int      @default(0) // in-flight reservations, not yet settled
   updatedAt  DateTime     @updatedAt
 
   @@unique([subject, provider, capability, period])
+}
+
+/// One in-flight platform-funded AI attempt. Created atomically with the counter update;
+/// settled (deleted) with actual usage after success, failure, timeout or retry. Rows left
+/// behind by a crashed process are swept after expiresAt and charged conservatively.
+model AiUsageReservation {
+  id         String       @id @default(cuid())
+  subject    String
+  provider   AiProvider
+  capability AiCapability
+  period     String
+  tokens     Int
+  expiredAt  DateTime? // set by the sweeper when the estimate was charged
+  createdAt  DateTime     @default(now())
+  expiresAt  DateTime
+
+  @@index([expiresAt])
 }
 
 /// One row per AI operation attempt (success, failure or denial). No prompts or outputs are stored.
@@ -1745,6 +1763,7 @@ model AiRequestLog {
   outputTokens        Int?
   estimatedCostMicros Int? // estimate from configured price table; NOT provider billing
   latencyMs           Int?
+  attempt             Int                @default(1)
   createdAt           DateTime           @default(now())
 
   @@index([organisationId, createdAt])

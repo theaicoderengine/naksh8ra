@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { requirePlatformPage } from "@/server/auth/page";
 import { getOrgAiAccess } from "@/server/services/ai-admin";
 import { PageHeader } from "@/components/ui/card";
@@ -11,7 +12,8 @@ import { AiAccessPanels } from "@/components/admin/ai-detail";
 export default async function OrgAiAccess({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const s = await requirePlatformPage("platform.ai.view");
-  const d = await getOrgAiAccess(s, id).catch(() => notFound());
+  const h = await headers();
+  const d = await getOrgAiAccess(s, id, { ip: h.get("x-forwarded-for"), userAgent: h.get("user-agent"), requestId: "page" }).catch(() => notFound());
   const enabled = d.grants.filter((g) => g.enabled).length;
   return (
     <>

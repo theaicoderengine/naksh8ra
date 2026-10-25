@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+// Mirrors AMBIENT_SDK_ENV in providers/llm (kept here to avoid an import cycle).
+const AMBIENT_SDK_ENV = ["ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_IDENTITY_TOKEN", "ANTHROPIC_IDENTITY_TOKEN_FILE", "ANTHROPIC_FEDERATION_RULE_ID", "ANTHROPIC_ENVIRONMENT_ID", "ANTHROPIC_ENVIRONMENT_KEY", "ANTHROPIC_CONFIG_DIR", "AZURE_OPENAI_API_KEY", "GOOGLE_GENAI_USE_ENTERPRISE", "GOOGLE_VERTEX_BASE_URL"];
+
 const bool = z
   .enum(["true", "false", "1", "0", ""])
   .optional()
@@ -45,6 +48,9 @@ const schema = z.object({
   // in production and every session that used them is labelled FIXTURE in the UI.
   ALLOW_FIXTURE_PROVIDERS: bool,
   AI_TIMEOUT_MS: z.coerce.number().default(60_000),
+  // Retries of transient provider errors (5xx/timeouts), each a separately reserved attempt.
+  AI_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
+  AI_RETRY_BASE_MS: z.coerce.number().int().min(0).max(60_000).default(1000),
 
   // Storage
   STORAGE_PROVIDER: z.enum(["local", "s3"]).default("local"),
@@ -94,6 +100,10 @@ export function env(): Env {
     throw new Error(`Invalid environment configuration: ${issues}`);
   }
   const e = parsed.data;
+  // AI SDK variables that would attach platform configuration to organisation-key
+  // requests (see src/server/providers/llm). Fail closed at start-up.
+  const ambient = AMBIENT_SDK_ENV.filter((k) => !!process.env[k]);
+  if (ambient.length) throw new Error(`Unsupported AI SDK environment variables are set: ${ambient.join(", ")}. Remove them.`);
   if (e.APP_ENV === "production" || e.APP_ENV === "staging") {
     if (!e.ENCRYPTION_KEY) throw new Error("ENCRYPTION_KEY is required outside development");
     if (e.ALLOW_FIXTURE_PROVIDERS && e.APP_ENV === "production") {

@@ -14,6 +14,8 @@ export const RULES = {
   upload: { limit: 30, windowSec: 60 * 10 },
   interviewTurn: { limit: 60, windowSec: 60 },
   ai: { limit: 30, windowSec: 60 },
+  // Connection tests send a caller-supplied key to a provider: keep this low (key-guessing / abuse).
+  aiKeyTest: { limit: 10, windowSec: 10 * 60 },
   contact: { limit: 5, windowSec: 60 * 60 },
   invitationOpen: { limit: 30, windowSec: 60 * 10 },
 } as const;

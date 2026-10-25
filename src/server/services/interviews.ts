@@ -325,11 +325,13 @@ export async function getCandidateState(a: InterviewAccess) {
   const scope: AiScope = { kind: "ORG", organisationId: a.organisationId, sessionId: _needs.sessionId };
   let providers: { ready: boolean; message: string | null } = { ready: true, message: null };
   const [conv, stt, tts] = await Promise.all([_needs.conversation ? describeAi(scope, "INTERVIEW_CONVERSATION") : null, describeAi(scope, "TRANSCRIPTION"), describeAi(scope, "SPEECH_SYNTHESIS")]);
-  if (conv && !conv.available) providers = { ready: false, message: conv.message };
+  // Candidates get a neutral message: configuration details are for the employer, not them.
+  const CANDIDATE_MSG = "the interview service is not available for this employer at the moment";
+  if (conv && !conv.available) providers = { ready: false, message: CANDIDATE_MSG };
   // Without authorised speech-to-text, the interview can still run when typed answers are
   // allowed — the candidate is told spoken answers are unavailable. It only blocks when
   // audio is the sole way to answer.
-  else if (!stt.available && !_needs.typedAllowed) providers = { ready: false, message: stt.message };
+  else if (!stt.available && !_needs.typedAllowed) providers = { ready: false, message: CANDIDATE_MSG };
   return { ...state, providers, spokenAnswers: stt.available, ttsMode: tts.available && tts.resolution ? ("server" as const) : ("browser" as const) };
 }
 

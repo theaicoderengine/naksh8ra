@@ -21,6 +21,7 @@ export type JobPayloads = {
   "dsr.delete": { requestId: string };
   "billing.reconcile": Record<string, never>;
   "credits.expire": Record<string, never>;
+  "ai.reservations.sweep": Record<string, never>;
 };
 export type JobName = keyof JobPayloads;
 

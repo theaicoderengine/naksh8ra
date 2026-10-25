@@ -11,6 +11,7 @@ Object.assign(process.env, {
   STT_PROVIDER: "fixture",
   TTS_PROVIDER: "browser",
   ALLOW_FIXTURE_PROVIDERS: "true",
+  AI_RETRY_BASE_MS: "5",
   EMAIL_PROVIDER: "console",
   STORAGE_PROVIDER: "local",
   STORAGE_LOCAL_DIR: "./tmp/test-storage",

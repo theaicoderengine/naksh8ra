@@ -46,7 +46,53 @@ export interface LlmAdapter {
   verify(model: string): Promise<void>;
 }
 
-export type AdapterOptions = { fetch?: Fetch; timeoutMs?: number; retryDelaySec?: { initial: number; max: number } };
+/** `isolated` is accepted for clarity; every client is always isolated from SDK environment variables. */
+export type AdapterOptions = { fetch?: Fetch; timeoutMs?: number; isolated?: true };
+
+/**
+ * Official endpoints, set explicitly so no SDK environment variable (e.g. ANTHROPIC_BASE_URL,
+ * OPENAI_BASE_URL, GOOGLE_GEMINI_BASE_URL) can redirect a request — and the key in it.
+ */
+export const OFFICIAL_BASE_URL = { ANTHROPIC: "https://api.anthropic.com", OPENAI: "https://api.openai.com/v1", GEMINI: "https://generativelanguage.googleapis.com/" } as const;
+
+/**
+ * SDK environment variables that would silently attach platform configuration or
+ * credentials to EVERY request (including organisation-key requests) and that cannot be
+ * neutralised from code. Their presence is a configuration error: AI clients refuse to
+ * start (and so does the app, see env.ts) rather than risk mixing credentials.
+ */
+export const AMBIENT_SDK_ENV = [
+  "ANTHROPIC_CUSTOM_HEADERS",
+  "ANTHROPIC_IDENTITY_TOKEN",
+  "ANTHROPIC_IDENTITY_TOKEN_FILE",
+  "ANTHROPIC_FEDERATION_RULE_ID",
+  "ANTHROPIC_ENVIRONMENT_ID",
+  "ANTHROPIC_ENVIRONMENT_KEY",
+  "ANTHROPIC_CONFIG_DIR",
+  "AZURE_OPENAI_API_KEY",
+  "GOOGLE_GENAI_USE_ENTERPRISE",
+  "GOOGLE_VERTEX_BASE_URL",
+] as const;
+
+export function ambientSdkEnvSet(): string[] {
+  return AMBIENT_SDK_ENV.filter((k) => !!process.env[k]);
+}
+
+/**
+ * Retries happen in the resolver (src/server/ai/access.ts), one platform-limit
+ * reservation per attempt, so SDK-internal retries are disabled here.
+ */
+export function isRetryable(err: AppError) {
+  const reason = (err.details as { reason?: string } | undefined)?.reason;
+  return err.code === "PROVIDER_ERROR" && (reason === "unavailable" || reason === "timeout");
+}
+
+/** Output-token cap used for a request (also the size of its platform token reservation). */
+export function maxOutputTokens(provider: LlmProviderId, kind: "json" | "text", requested?: number) {
+  if (requested) return requested;
+  if (kind === "text") return provider === "ANTHROPIC" ? 2000 : 1000;
+  return provider === "ANTHROPIC" ? 16000 : provider === "GEMINI" ? 8192 : 8000;
+}
 
 function toJsonSchema(schema: z4.ZodType): Record<string, unknown> {
   const js = z4.toJSONSchema(schema) as Record<string, unknown>;
@@ -123,7 +169,7 @@ class AnthropicAdapter implements LlmAdapter {
   mode = "LIVE" as const;
   private client: Anthropic;
   constructor(private apiKey: string, opts: AdapterOptions) {
-    this.client = new Anthropic({ apiKey: requireKey(apiKey), timeout: opts.timeoutMs ?? env().AI_TIMEOUT_MS, maxRetries: 2, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
+    this.client = new Anthropic({ apiKey: requireKey(apiKey), authToken: null, baseURL: OFFICIAL_BASE_URL.ANTHROPIC, timeout: opts.timeoutMs ?? env().AI_TIMEOUT_MS, maxRetries: 0, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
   }
 
   /** Uses the beta endpoint so eligible models get server-side refusal fallbacks (same model family, decided by the provider). */
@@ -179,7 +225,7 @@ class OpenAiAdapter implements LlmAdapter {
   mode = "LIVE" as const;
   private client: OpenAI;
   constructor(private apiKey: string, opts: AdapterOptions) {
-    this.client = new OpenAI({ apiKey: requireKey(apiKey), timeout: opts.timeoutMs ?? env().AI_TIMEOUT_MS, maxRetries: 2, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
+    this.client = new OpenAI({ apiKey: requireKey(apiKey), organization: null, project: null, baseURL: OFFICIAL_BASE_URL.OPENAI, timeout: opts.timeoutMs ?? env().AI_TIMEOUT_MS, maxRetries: 0, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
   }
   async json<T>(req: JsonRequest<T>, model: string) {
     try {
@@ -229,9 +275,10 @@ export class GeminiAdapter implements LlmAdapter {
       vertexai: false, // never pick up Vertex/ADC credentials from the environment
       httpOptions: {
         timeout: opts.timeoutMs ?? env().AI_TIMEOUT_MS,
-        // Transient errors only. 429 (quota/rate limit) is deliberately NOT retried so a
-        // free-tier quota is not burned by retries; it is reported to the caller instead.
-        retryOptions: { attempts: 3, initialDelay: opts.retryDelaySec?.initial ?? 1, maxDelay: opts.retryDelaySec?.max ?? 8, httpStatusCodes: [408, 500, 502, 503, 504] },
+        baseUrl: OFFICIAL_BASE_URL.GEMINI,
+        // No SDK retries: the resolver retries transient errors only (never 429, so a
+        // free-tier quota is not burned), reserving platform limits per attempt.
+        retryOptions: { attempts: 1 },
         ...(opts.fetch ? { fetch: opts.fetch } : {}),
       },
     });
@@ -295,16 +342,20 @@ class FixtureAdapter implements LlmAdapter {
   provider = "FIXTURE" as const;
   mode = "FIXTURE" as const;
   constructor(private apiKey: string) {}
-  private simulate() {
-    if (this.apiKey === "fixture-quota") throw classifyProviderError("FIXTURE", Object.assign(new Error("Resource exhausted"), { status: 429 }));
+  /** Test hooks: a key, or a marker in the prompt, selects a simulated provider failure. */
+  private simulate(prompt = "") {
+    if (this.apiKey === "fixture-quota" || prompt.includes("[[fixture:quota]]")) throw classifyProviderError("FIXTURE", Object.assign(new Error("Resource exhausted"), { status: 429 }));
     if (this.apiKey === "fixture-bad") throw classifyProviderError("FIXTURE", Object.assign(new Error("API key not valid"), { status: 401 }));
+    if (prompt.includes("[[fixture:unavailable]]")) throw classifyProviderError("FIXTURE", Object.assign(new Error("overloaded"), { status: 503 }));
+    if (prompt.includes("[[fixture:timeout]]")) throw classifyProviderError("FIXTURE", Object.assign(new Error("Request timed out."), { name: "APIConnectionTimeoutError" }));
+    if (prompt.includes("[[fixture:usage-then-fail]]")) throw new AppError("PROVIDER_ERROR", "AI output was truncated", { reason: "truncated", usage: { inputTokens: 40, outputTokens: 60 } });
   }
   async json<T>(req: JsonRequest<T>, model: string) {
-    this.simulate();
+    this.simulate(req.user);
     return { data: req.schema.parse(fixtureJson(req.purpose, req.user)), model, usage: { inputTokens: 100, outputTokens: 50 } };
   }
   async text(req: TextRequest, model: string) {
-    this.simulate();
+    this.simulate(req.messages.map((m) => m.content).join("\n"));
     return { text: fixtureText(req.purpose, req.messages), model, usage: { inputTokens: 50, outputTokens: 20 } };
   }
   async verify(model: string) {
@@ -315,6 +366,11 @@ class FixtureAdapter implements LlmAdapter {
 }
 
 export function createLlmAdapter(provider: LlmProviderId, apiKey: string, opts: AdapterOptions = {}): LlmAdapter {
+  const ambient = ambientSdkEnvSet();
+  if (ambient.length) {
+    logger.error({ vars: ambient }, "refusing to create AI client: unsupported SDK environment variables are set");
+    throw new AppError("PROVIDER_NOT_CONFIGURED", "AI is disabled by a server configuration error. An administrator must remove unsupported AI SDK environment variables.");
+  }
   switch (provider) {
     case "ANTHROPIC":
       return new AnthropicAdapter(apiKey, opts);

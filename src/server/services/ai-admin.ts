@@ -109,10 +109,12 @@ export async function listOrgAiAccess(admin: SessionInfo, q?: string) {
   };
 }
 
-export async function getOrgAiAccess(admin: SessionInfo, orgId: string) {
+export async function getOrgAiAccess(admin: SessionInfo, orgId: string, meta?: RequestMeta) {
   requirePerm(admin, "platform.ai.view");
   const org = await prisma.organisation.findUnique({ where: { id: orgId }, select: { id: true, name: true, slug: true, status: true, type: true } });
   if (!org) throw notFound("Organisation");
+  // Platform staff viewing an organisation's AI configuration is recorded in its audit log.
+  await audit({ organisationId: org.id, actorUserId: admin.user.id, actorType: "PLATFORM_ADMIN", action: "platform.ai_access_viewed", targetType: "Organisation", targetId: org.id, ip: meta?.ip ?? null });
   return { organisation: org, subject: org.id, deployment: deploymentAiStatus(), catalog: modelCatalog(), capabilities: capabilityList("ORG"), canManage: platformCan(admin.user.platformRole, "platform.ai.manage"), ...(await accessDetail(org.id, org.id)) };
 }
 

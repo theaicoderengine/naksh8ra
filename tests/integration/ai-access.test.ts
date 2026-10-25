@@ -4,7 +4,7 @@ import { prisma } from "@/server/db/client";
 import { withOrg, withSystem } from "@/server/db/tenant";
 import { createSession } from "@/server/auth/session";
 import { decrypt } from "@/server/auth/crypto";
-import { aiJson, describeAi } from "@/server/ai/access";
+import { aiJson, describeAi, estimateReservationTokens, sweepExpiredReservations, _test } from "@/server/ai/access";
 import { PERSONAL_SUBJECT } from "@/server/ai/catalog";
 import { JobDraftSchema } from "@/server/ai/prompts";
 import { draftJobDescription, createJob } from "@/server/services/jobs";
@@ -35,6 +35,8 @@ const draft = { title: "Data Analyst", seniority: "Junior" };
 const jsonReq = { purpose: "jd.v1", system: "s", user: `Draft a job description.\n${"x"}`, schema: JobDraftSchema as never };
 const logs = (orgId: string) => withSystem("test", (tx) => tx.aiRequestLog.findMany({ where: { organisationId: orgId }, orderBy: { createdAt: "asc" } }));
 const FIXTURE_KEY = { apiKey: "fixture-ok", model: "fixture-llm-v1" };
+const counter = async (subject: string) => (await withSystem("test", (tx) => tx.aiUsageCounter.findFirst({ where: { subject, capability: "JOB_DRAFTING" } }))) ?? { requests: 0, tokens: 0, tokensReserved: 0 };
+const openReservations = (subject: string) => withSystem("test", (tx) => tx.aiUsageReservation.count({ where: { subject } }));
 
 describe("Platform AI access is denied by default", () => {
   it("a new organisation cannot invoke, or indirectly reach, platform-funded AI", async () => {
@@ -290,12 +292,112 @@ describe("Concurrency, limits and credential rotation", () => {
     expect(counter.tokens).toBeGreaterThan(0);
   });
 
-  it("token limits stop further platform calls once reached", async () => {
+  it("concurrent reservations cannot exceed the token limit (worst case reserved atomically)", async () => {
     const { org } = await makeOrg();
-    await grantPlatformAi(org.id, ["JOB_DRAFTING"], { monthlyTokenLimit: 100 }); // fixture call ≈ 150 tokens
+    const E = estimateReservationTokens("FIXTURE", "json", jsonReq);
+    const limit = 3 * E + Math.floor(E / 2);
+    await grantPlatformAi(org.id, ["JOB_DRAFTING"], { monthlyTokenLimit: limit });
     const scope = { kind: "ORG" as const, organisationId: org.id };
-    await aiJson(scope, "JOB_DRAFTING", jsonReq);
+    // 8 attempts in flight at once (none settled): exactly 3 fit.
+    const held = await Promise.allSettled(Array.from({ length: 8 }, () => _test.reservePlatform(scope, { provider: "FIXTURE", capability: "JOB_DRAFTING", model: "fixture-llm-v1" }, E)));
+    const ok = held.filter((r): r is PromiseFulfilledResult<{ id: string; tokens: number }> => r.status === "fulfilled");
+    expect(ok).toHaveLength(3);
+    expect(held.filter((r) => r.status === "rejected").every((r) => (r as PromiseRejectedResult).reason.code === "AI_LIMIT_REACHED")).toBe(true);
+    expect(await counter(org.id)).toMatchObject({ requests: 3, tokensReserved: 3 * E, tokens: 0 });
+    // Settling releases the unused part of each reservation.
+    for (const r of ok) await _test.settleReservation(r.value, 150);
+    expect(await counter(org.id)).toMatchObject({ tokensReserved: 0, tokens: 450 });
+  });
+
+  it("end to end under concurrency, settled + reserved usage never exceeds the limit", async () => {
+    const { org } = await makeOrg();
+    const E = estimateReservationTokens("FIXTURE", "json", jsonReq);
+    const limit = 2 * E;
+    await grantPlatformAi(org.id, ["JOB_DRAFTING"], { monthlyTokenLimit: limit });
+    const scope = { kind: "ORG" as const, organisationId: org.id };
+    const results = await Promise.allSettled(Array.from({ length: 12 }, () => aiJson(scope, "JOB_DRAFTING", jsonReq)));
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    expect(succeeded).toBeGreaterThanOrEqual(2);
+    expect(results.filter((r) => r.status === "rejected").every((r) => (r as PromiseRejectedResult).reason.code === "AI_LIMIT_REACHED")).toBe(true);
+    const c = await counter(org.id);
+    expect(c.tokensReserved).toBe(0);
+    expect(c.tokens).toBe(150 * succeeded);
+    expect(c.tokens + E).toBeGreaterThan(limit - E); // sanity: limit was actually binding
+    expect(c.tokens).toBeLessThanOrEqual(limit);
+    expect(await openReservations(org.id)).toBe(0);
+  });
+
+  it("reservations are reconciled after failures: transient errors retry with a fresh reservation each; quota errors do not retry", async () => {
+    const { org } = await makeOrg();
+    await grantPlatformAi(org.id, ["JOB_DRAFTING"]);
+    const scope = { kind: "ORG" as const, organisationId: org.id };
+    const req = (marker: string) => ({ ...jsonReq, user: `${jsonReq.user} ${marker}` });
+    const inputEst = (marker: string) => estimateReservationTokens("FIXTURE", "json", req(marker)) - estimateReservationTokens("FIXTURE", "json", { system: "", user: "" });
+
+    // 503 / unavailable: 1 + AI_MAX_RETRIES attempts, each reserved and settled; input estimate charged per attempt.
+    await expect(aiJson(scope, "JOB_DRAFTING", req("[[fixture:unavailable]]"))).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    let c = await counter(org.id);
+    expect(c.requests).toBe(3);
+    expect(c.tokensReserved).toBe(0);
+    expect(c.tokens).toBe(3 * inputEst("[[fixture:unavailable]]"));
+    const attempts = (await logs(org.id)).filter((l) => l.errorCode === "unavailable").map((l) => l.attempt);
+    expect(attempts).toEqual([1, 2, 3]);
+
+    // Timeout: retried as well, input estimate charged.
+    await expect(aiJson(scope, "JOB_DRAFTING", req("[[fixture:timeout]]"))).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    c = await counter(org.id);
+    expect(c.requests).toBe(6);
+    expect(c.tokens).toBe(3 * inputEst("[[fixture:unavailable]]") + 3 * inputEst("[[fixture:timeout]]"));
+
+    // Quota (429): one attempt, nothing charged, no retry.
+    const before = await counter(org.id);
+    await expect(aiJson(scope, "JOB_DRAFTING", req("[[fixture:quota]]"))).rejects.toMatchObject({ code: "PROVIDER_QUOTA_EXCEEDED" });
+    c = await counter(org.id);
+    expect(c.requests).toBe(before.requests + 1);
+    expect(c.tokens).toBe(before.tokens);
+
+    // A failure that reports usage is charged exactly that usage.
+    await expect(aiJson(scope, "JOB_DRAFTING", req("[[fixture:usage-then-fail]]"))).rejects.toMatchObject({ code: "PROVIDER_ERROR" });
+    expect((await counter(org.id)).tokens).toBe(c.tokens + 100);
+    expect(await openReservations(org.id)).toBe(0);
+  });
+
+  it("a retry stops immediately when access is revoked between attempts", async () => {
+    const { org } = await makeOrg();
+    const admin = await grantPlatformAi(org.id, ["JOB_DRAFTING"]);
+    const scope = { kind: "ORG" as const, organisationId: org.id };
+    const p = aiJson(scope, "JOB_DRAFTING", { ...jsonReq, user: `${jsonReq.user} [[fixture:unavailable]]` });
+    await setAiGrants(admin, org.id, { reason: "revoke mid-retry", grants: [{ provider: "FIXTURE", capability: "JOB_DRAFTING", enabled: false, allowedModels: [], monthlyRequestLimit: null, monthlyTokenLimit: null }] }, meta);
+    await expect(p).rejects.toMatchObject({ code: expect.stringMatching(/AI_ACCESS_DENIED|PROVIDER_ERROR/) });
+    const l = await logs(org.id);
+    expect(l.filter((x) => x.status === "FAILED").length).toBeLessThan(3); // did not complete all retries after revocation
+    expect(await openReservations(org.id)).toBe(0);
+  });
+
+  it("orphaned reservations (crashed process) are swept and charged conservatively; a late settle corrects them", async () => {
+    const { org } = await makeOrg();
+    await grantPlatformAi(org.id, ["JOB_DRAFTING"], { monthlyTokenLimit: 1_000_000 });
+    const scope = { kind: "ORG" as const, organisationId: org.id };
+    const res = await _test.reservePlatform(scope, { provider: "FIXTURE", capability: "JOB_DRAFTING", model: "fixture-llm-v1" }, 5000);
+    expect(await counter(org.id)).toMatchObject({ requests: 1, tokensReserved: 5000, tokens: 0 });
+    // Not yet expired: the sweep leaves it alone.
+    expect((await sweepExpiredReservations()).expired).toBe(0);
+    // Simulate time passing beyond expiry.
+    expect((await sweepExpiredReservations(new Date(Date.now() + 86400_000))).expired).toBeGreaterThanOrEqual(1);
+    expect(await counter(org.id)).toMatchObject({ tokensReserved: 0, tokens: 5000 });
+    await _test.settleReservation(res, 120); // the process recovered and reports actual usage
+    expect(await counter(org.id)).toMatchObject({ tokensReserved: 0, tokens: 120 });
+    await _test.settleReservation(res, 120); // idempotent
+    expect((await counter(org.id)).tokens).toBe(120);
+  });
+
+  it("a request larger than the remaining token budget is refused before calling the provider", async () => {
+    const { org } = await makeOrg();
+    await grantPlatformAi(org.id, ["JOB_DRAFTING"], { monthlyTokenLimit: 100 });
+    const scope = { kind: "ORG" as const, organisationId: org.id };
     await expect(aiJson(scope, "JOB_DRAFTING", jsonReq)).rejects.toMatchObject({ code: "AI_LIMIT_REACHED" });
+    expect(await counter(org.id)).toMatchObject({ requests: 0, tokens: 0, tokensReserved: 0 });
+    expect((await logs(org.id)).filter((l) => l.status === "SUCCEEDED")).toHaveLength(0);
   });
 
   it("rotation takes effect for the next operation; concurrent operations use a consistent credential version", async () => {
@@ -351,5 +453,55 @@ describe("Background workers re-resolve access with the job's own tenant", () =>
     // The interview credit was consumed once at completion; a failed assessment did not create extra charges.
     const ledger = await withOrg(a.org.id, null, (tx) => tx.creditLedgerEntry.findMany({ where: { organisationId: a.org.id, type: "CONSUME" } }));
     expect(ledger).toHaveLength(1);
+  });
+});
+
+describe("Security review regressions", () => {
+  it("an undecryptable stored key (e.g. ENCRYPTION_KEY changed) fails clearly and never falls back to platform AI", async () => {
+    const { org, ctx } = await makeOrg();
+    await grantPlatformAi(org.id, ["JOB_DRAFTING"]);
+    await saveOrgCredential(ctx, "FIXTURE", FIXTURE_KEY, meta);
+    await withOrg(org.id, null, (tx) => tx.orgAiCredential.updateMany({ data: { encryptedKey: "v1:not-a-valid-ciphertext" } }));
+    await expect(draftJobDescription(ctx, draft)).rejects.toMatchObject({ code: "PROVIDER_NOT_CONFIGURED", details: { reason: "undecryptable" } });
+    expect((await logs(org.id)).some((l) => l.source === "PLATFORM")).toBe(false);
+  });
+
+  it("candidate-facing AI errors are neutral: no provider, quota tier or configuration details", async () => {
+    const { candidateSafe } = await import("@/server/http/interview-access");
+    const { AppError } = await import("@/server/errors");
+    const err = await candidateSafe(Promise.reject(new AppError("PROVIDER_QUOTA_EXCEEDED", "Gemini quota or rate limit reached. Free-tier quotas are lower…"))).catch((e) => e);
+    expect(err.code).toBe("PROVIDER_QUOTA_EXCEEDED");
+    expect(err.message).not.toMatch(/Gemini|Free-tier|key|Settings|platform/i);
+    const other = await candidateSafe(Promise.reject(new AppError("INVALID_STATE", "The interview is not in progress"))).catch((e) => e);
+    expect(other.message).toBe("The interview is not in progress"); // non-AI errors unchanged
+  });
+
+  it("the app refuses to start with un-overridable AI SDK environment variables", async () => {
+    const { env, resetEnvCache } = await import("@/server/env");
+    process.env.ANTHROPIC_CUSTOM_HEADERS = "x-leak: 1";
+    resetEnvCache();
+    try {
+      expect(() => env()).toThrow(/Unsupported AI SDK environment variables/);
+    } finally {
+      delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+      resetEnvCache();
+    }
+    expect(() => env()).not.toThrow();
+  });
+
+  it("request logs: organisations can read but never alter them; system jobs can prune and pseudonymise", async () => {
+    const { org, ctx } = await makeOrg();
+    await saveOrgCredential(ctx, "FIXTURE", FIXTURE_KEY, meta);
+    await draftJobDescription(ctx, draft);
+    expect((await withOrg(org.id, null, (tx) => tx.aiRequestLog.updateMany({ data: { status: "FAILED" } }))).count).toBe(0);
+    expect((await withOrg(org.id, null, (tx) => tx.aiRequestLog.deleteMany({}))).count).toBe(0);
+    expect((await withSystem("test", (tx) => tx.aiRequestLog.updateMany({ where: { organisationId: org.id }, data: { userId: null } }))).count).toBeGreaterThan(0);
+  });
+
+  it("platform staff viewing an organisation's AI access is audited", async () => {
+    const { org } = await makeOrg();
+    const admin = await makeUser({ platformRole: "SUPER_ADMIN" });
+    await getOrgAiAccess(await sessionFor(admin.id, true), org.id, meta);
+    expect(await prisma.auditEvent.count({ where: { organisationId: org.id, action: "platform.ai_access_viewed", actorUserId: admin.id } })).toBe(1);
   });
 });

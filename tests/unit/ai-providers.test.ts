@@ -24,7 +24,7 @@ function fakeFetch(responses: { status: number; body: unknown }[]) {
 const KEY = "AIzaSyTESTKEY-not-real-0000000000";
 const Schema = z4.object({ answer: z4.string(), score: z4.number() });
 const req = { purpose: "test.v1", system: "You are a test.", user: "Say hi", schema: Schema };
-const gemini = (f: ReturnType<typeof fakeFetch>) => new GeminiAdapter(KEY, { fetch: f.fn as never, retryDelaySec: { initial: 0.01, max: 0.02 } });
+const gemini = (f: ReturnType<typeof fakeFetch>) => new GeminiAdapter(KEY, { fetch: f.fn as never });
 
 describe("Gemini adapter (official SDK, fake transport)", () => {
   it("requests structured JSON output and returns parsed data with token usage", async () => {
@@ -53,21 +53,12 @@ describe("Gemini adapter (official SDK, fake transport)", () => {
     expect(JSON.stringify(err)).not.toContain(KEY);
   });
 
-  it("retries transient 5xx errors with backoff, then reports the provider as unavailable", async () => {
+  it("reports transient 5xx errors as retryable without retrying inside the SDK (the resolver retries, reserving limits per attempt)", async () => {
     const f = fakeFetch([{ status: 503, body: { error: { code: 503, message: "overloaded", status: "UNAVAILABLE" } } }]);
     const err = await gemini(f).json(req, "gemini-2.5-flash").catch((e) => e);
     expect(err.code).toBe("PROVIDER_ERROR");
     expect(err.details.reason).toBe("unavailable");
-    expect(f.calls).toHaveLength(3);
-  });
-
-  it("a transient failure followed by success returns the result", async () => {
-    const f = fakeFetch([
-      { status: 500, body: { error: { code: 500, message: "internal" } } },
-      { status: 200, body: { candidates: [{ content: { role: "model", parts: [{ text: '{"answer":"ok","score":1}' }] }, finishReason: "STOP" }] } },
-    ]);
-    expect((await gemini(f).json(req, "gemini-2.5-flash")).data.answer).toBe("ok");
-    expect(f.calls).toHaveLength(2);
+    expect(f.calls).toHaveLength(1);
   });
 
   it("rejected keys are reported as authentication failures", async () => {
