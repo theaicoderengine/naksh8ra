@@ -133,10 +133,11 @@ jobs:
         run: docker build --target web -t atlas-web:${{ github.sha }} .
       - name: Build tooling (worker/migrate) image
         run: docker build --target tooling -t atlas-tooling:${{ github.sha }} .
-      - name: Scan web image (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: atlas-web:${{ github.sha }}
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "0" # report-only until the base-image policy is agreed
+      # Trivy's official image (pinned) instead of the GitHub Action, whose version tags
+      # are no longer resolvable. Report-only until the base-image policy is agreed.
+      - name: Scan images (Trivy)
+        run: |
+          for img in atlas-web atlas-tooling; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.58.1 \
+              image --severity CRITICAL,HIGH --ignore-unfixed --exit-code 0 --no-progress "$img:${{ github.sha }}"
+          done

@@ -87,6 +87,7 @@ Starts Postgres (roles bootstrapped automatically), Redis, Mailpit (`:8025`), a 
 - [AI provider access & BYOK](docs/ai-providers.md) — platform grants, organisation keys, Gemini, resolution rules
 - [Providers](docs/providers.md) — configuring AI, speech, email, storage, payments; current verification status
 - [Deployment](docs/deployment.md) — staging/production, domains, TLS, secrets
+- [AWS deployment](docs/deployment-aws.md) — Terraform (ECS, RDS, ElastiCache, S3, ClamAV), bootstrap, gated deploy workflow
 - [Operations runbook](docs/operations.md) — monitoring, backups, recovery, incidents, rollback, release checklist
 - [Launch checklist](docs/launch-checklist.md)
 - [Test results](docs/test-results.md) — what was actually run, and results

@@ -1,0 +1,52 @@
+# Manual deployment. Staging always first; production only after staging passes AND a
+# required reviewer approves the "production" GitHub Environment.
+# Setup (once per environment): docs/deployment-aws.md
+name: Deploy
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit to deploy (must have a green CI run)
+        required: true
+      promote_to_production:
+        description: Continue to production after staging smoke tests
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  ci-gate:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Require a successful CI run for this exact commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          ok=$(gh api "repos/${{ github.repository }}/actions/workflows/ci.yml/runs?head_sha=$SHA&status=success" --jq '.total_count')
+          if [ "$ok" -lt 1 ]; then echo "::error::No successful CI run for $SHA; refusing to deploy"; exit 1; fi
+
+  staging:
+    needs: ci-gate
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: staging
+      sha: ${{ inputs.sha }}
+    secrets: inherit
+
+  production:
+    needs: staging
+    if: ${{ inputs.promote_to_production }}
+    uses: ./.github/workflows/deploy-env.yml
+    with:
+      environment: production
+      sha: ${{ inputs.sha }}
+    secrets: inherit
