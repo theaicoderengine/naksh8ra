@@ -155,7 +155,33 @@ async function demo() {
     update: {},
   });
 
+  // DEMO ONLY: explicitly grant platform AI to the demo employer and to personal (student)
+  // accounts for whichever deployment providers are configured, so the local demo works.
+  // Real organisations start with NO platform AI until a super-admin grants it.
+  const llmMap: Record<string, "ANTHROPIC" | "OPENAI" | "GEMINI" | "FIXTURE"> = { anthropic: "ANTHROPIC", openai: "OPENAI", gemini: "GEMINI", fixture: "FIXTURE" };
+  const sttMap: Record<string, "OPENAI" | "DEEPGRAM" | "FIXTURE"> = { openai: "OPENAI", deepgram: "DEEPGRAM", fixture: "FIXTURE" };
+  const llmProvider = llmMap[process.env.LLM_PROVIDER ?? ""];
+  const sttProvider = sttMap[process.env.STT_PROVIDER ?? ""];
+  const demoGrant = async (subject: string, organisationId: string | null, capability: string, provider: string) =>
+    prisma.platformAiGrant.upsert({
+      where: { subject_provider_capability: { subject, provider: provider as never, capability: capability as never } },
+      create: { subject, organisationId, provider: provider as never, capability: capability as never, enabled: true },
+      update: {},
+    });
+  const grants: string[] = [];
+  if (llmProvider) {
+    for (const c of ["JOB_DRAFTING", "QUESTION_GENERATION", "INTERVIEW_CONVERSATION", "ASSESSMENT"]) await demoGrant(org.id, org.id, c, llmProvider);
+    for (const c of ["RESUME_PARSING", "PRACTICE_COACHING"]) await demoGrant("PERSONAL", null, c, llmProvider);
+    grants.push(`text AI via ${llmProvider}`);
+  }
+  if (sttProvider) {
+    await demoGrant(org.id, org.id, "TRANSCRIPTION", sttProvider);
+    await demoGrant("PERSONAL", null, "TRANSCRIPTION", sttProvider);
+    grants.push(`speech-to-text via ${sttProvider}`);
+  }
+
   console.log("\nDemo data ready (all accounts use the same password):");
+  if (grants.length) console.log(`  demo AI grants:   ${grants.join(", ")} (northwind-labs + personal accounts only)`);
   console.log(`  password: ${password}`);
   console.log("  employer owner:   owner@northwind.example");
   console.log("  HR admin:         hr@northwind.example");

@@ -7,6 +7,8 @@ import { listOrgAccommodations } from "@/server/services/students";
 import { PageHeader, Card, CardBody } from "@/components/ui/card";
 import { Tabs } from "@/components/ui/tabs";
 import { PermissionDenied } from "@/components/ui/feedback";
+import { getOrgAiSettings } from "@/server/services/ai-settings";
+import { AiProvidersSettings } from "@/components/workspace/ai-providers";
 import { OrgProfileForm, PreferencesForm, StagesEditor, DepartmentsEditor, RetentionEditor, PrivacyRequests, Accommodations, SupportAccess } from "@/components/workspace/settings-forms";
 
 export default async function Settings({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams: Promise<{ tab?: string }> }) {
@@ -22,6 +24,7 @@ export default async function Settings({ params, searchParams }: { params: Promi
     { key: "retention", label: "Data retention" },
     ...(ctx.can("retention.manage") ? [{ key: "privacy", label: "Privacy requests" }] : []),
     ...(emp && ctx.can("candidates.view_all") ? [{ key: "accommodations", label: "Accommodations" }] : []),
+    ...(emp && ctx.can("ai.manage") ? [{ key: "ai", label: "AI providers" }] : []),
     ...(ctx.can("support.approve_access") ? [{ key: "support", label: "Support access" }] : []),
   ];
   let body: React.ReactNode = null;
@@ -33,6 +36,7 @@ export default async function Settings({ params, searchParams }: { params: Promi
   else if (tab === "retention") body = <RetentionEditor policies={await getRetention(ctx.org.id)} />;
   else if (tab === "privacy") body = <PrivacyRequests items={JSON.parse(JSON.stringify(await listOrgDataRequests(ctx)))} />;
   else if (tab === "accommodations") body = <Accommodations items={JSON.parse(JSON.stringify(await listOrgAccommodations(ctx.org.id)))} />;
+  else if (tab === "ai") body = ctx.can("ai.manage") && emp ? <AiProvidersSettings data={JSON.parse(JSON.stringify(await getOrgAiSettings(ctx)))} /> : <PermissionDenied what="AI provider settings" />;
   else if (tab === "support") body = <SupportAccess items={JSON.parse(JSON.stringify(await prisma.supportAccessGrant.findMany({ where: { organisationId: ctx.org.id }, orderBy: { createdAt: "desc" }, take: 50 })))} />;
   return (
     <>

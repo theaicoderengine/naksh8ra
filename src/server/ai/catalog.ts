@@ -2,6 +2,7 @@ import type { AiCapability, AiProvider } from "@prisma/client";
 import { z } from "zod";
 import { env } from "../env";
 import { logger } from "../logger";
+import { PROVIDER_LABEL as LABELS } from "../../lib/ai-labels";
 
 /** Text-generation capabilities: resolvable with an organisation-owned key or a granted platform key. */
 export const TEXT_CAPABILITIES = ["JOB_DRAFTING", "RESUME_PARSING", "QUESTION_GENERATION", "INTERVIEW_CONVERSATION", "ASSESSMENT", "PRACTICE_COACHING"] as const satisfies readonly AiCapability[];
@@ -27,14 +28,7 @@ export const BYOK_PROVIDERS = ["GEMINI", "OPENAI", "ANTHROPIC"] as const satisfi
 export const LLM_PROVIDERS = ["ANTHROPIC", "OPENAI", "GEMINI", "FIXTURE"] as const satisfies readonly AiProvider[];
 export type LlmProviderId = (typeof LLM_PROVIDERS)[number];
 
-export const PROVIDER_LABEL: Record<AiProvider, string> = {
-  ANTHROPIC: "Anthropic",
-  OPENAI: "OpenAI",
-  GEMINI: "Google Gemini",
-  DEEPGRAM: "Deepgram",
-  ELEVENLABS: "ElevenLabs",
-  FIXTURE: "Fixture (test only)",
-};
+export const PROVIDER_LABEL = LABELS as Record<AiProvider, string>;
 
 /**
  * Free-tier eligibility as last published by the provider. This is informational:

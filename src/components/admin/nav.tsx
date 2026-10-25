@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/cn";
 
-const ITEMS = [["/admin", "Overview"], ["/admin/organisations", "Organisations"], ["/admin/plans", "Plans & credits"], ["/admin/health", "Operations"], ["/admin/flags", "Flags & settings"], ["/admin/tickets", "Support"], ["/admin/privacy", "Privacy requests"], ["/admin/audit", "Security audit"], ["/admin/admins", "Administrators"]];
+const ITEMS = [["/admin", "Overview"], ["/admin/organisations", "Organisations"], ["/admin/plans", "Plans & credits"], ["/admin/ai", "AI access"], ["/admin/health", "Operations"], ["/admin/flags", "Flags & settings"], ["/admin/tickets", "Support"], ["/admin/privacy", "Privacy requests"], ["/admin/audit", "Security audit"], ["/admin/admins", "Administrators"]];
 
 export function AdminNav() {
   const p = usePathname();

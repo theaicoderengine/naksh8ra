@@ -287,7 +287,7 @@ export async function getCandidateState(a: InterviewAccess) {
     const current = s.status === "IN_PROGRESS" && s.mode === "STRUCTURED_AUDIO" ? p[s.currentIndex] : null;
     const lastAnswered = Math.max(-1, ...answers.filter((x) => !x.isFollowUp).map((x) => x.position));
     const lastAttempt = answers.filter((x) => x.position === lastAnswered).reduce((m, x) => Math.max(m, x.attempt), 0);
-    const _needs = { conversation: s.mode === "REALTIME_CONVERSATIONAL", transcription: !(c.accessibility.allowTypedAnswers && !c.recordAudio), sessionId: s.id };
+    const _needs = { conversation: s.mode === "REALTIME_CONVERSATIONAL", typedAllowed: c.accessibility.allowTypedAnswers, sessionId: s.id };
     return {
       _needs,
       status: candidateStatus(s.status),
@@ -324,13 +324,13 @@ export async function getCandidateState(a: InterviewAccess) {
   // Re-resolved on every request: the organisation's own key or an authorised platform grant.
   const scope: AiScope = { kind: "ORG", organisationId: a.organisationId, sessionId: _needs.sessionId };
   let providers: { ready: boolean; message: string | null } = { ready: true, message: null };
-  const checks = [
-    ...(_needs.conversation ? [describeAi(scope, "INTERVIEW_CONVERSATION")] : []),
-    ...(_needs.transcription ? [describeAi(scope, "TRANSCRIPTION")] : []),
-  ];
-  for (const r of await Promise.all(checks)) if (!r.available) providers = { ready: false, message: r.message };
-  const tts = await describeAi(scope, "SPEECH_SYNTHESIS");
-  return { ...state, providers, ttsMode: tts.available && tts.resolution ? ("server" as const) : ("browser" as const) };
+  const [conv, stt, tts] = await Promise.all([_needs.conversation ? describeAi(scope, "INTERVIEW_CONVERSATION") : null, describeAi(scope, "TRANSCRIPTION"), describeAi(scope, "SPEECH_SYNTHESIS")]);
+  if (conv && !conv.available) providers = { ready: false, message: conv.message };
+  // Without authorised speech-to-text, the interview can still run when typed answers are
+  // allowed — the candidate is told spoken answers are unavailable. It only blocks when
+  // audio is the sole way to answer.
+  else if (!stt.available && !_needs.typedAllowed) providers = { ready: false, message: stt.message };
+  return { ...state, providers, spokenAnswers: stt.available, ttsMode: tts.available && tts.resolution ? ("server" as const) : ("browser" as const) };
 }
 
 function candidateStatus(s: InterviewSessionStatus) {
@@ -429,7 +429,7 @@ export async function startInterview(a: InterviewAccess, meta: RequestMeta) {
   const scope: AiScope = { kind: "ORG", organisationId: pre.organisationId, sessionId: pre.id };
   const conversation = pre.mode === "REALTIME_CONVERSATIONAL" ? await assertAiAvailable(scope, "INTERVIEW_CONVERSATION") : null;
   if (c.questionSelection === "ADAPTIVE" && plan(pre).length < c.questionCount) await assertAiAvailable(scope, "QUESTION_GENERATION");
-  if (c.recordAudio || !c.accessibility.allowTypedAnswers) await assertSpeechAvailable(scope, "TRANSCRIPTION");
+  if (!c.accessibility.allowTypedAnswers) await assertSpeechAvailable(scope, "TRANSCRIPTION"); // audio is the only way to answer
 
   let newPlan: PlanItem[] | null = null;
   if (pre.status === "READY" && plan(pre).length < c.questionCount) newPlan = await buildAdaptivePlan(pre);

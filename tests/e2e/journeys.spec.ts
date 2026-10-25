@@ -1,4 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
+import { PrismaClient } from "@prisma/client";
+import { decrypt } from "../../src/server/auth/crypto";
+import { totp } from "../../src/server/auth/totp";
 
 const PW = "E2e-password-2026!";
 const run = Date.now().toString(36);
@@ -116,6 +119,33 @@ test.describe.serial("End-to-end journeys", () => {
     await expect(page.getByText("Published", { exact: true })).toBeVisible();
   });
 
+  test("AI access: a new organisation has no platform AI; the owner connects its own key, tested before activation", async ({ page }) => {
+    await login(page, owner);
+    await page.goto(`/w/${orgSlug}`);
+    await expect(page.getByText("AI is not set up for this organisation")).toBeVisible();
+    await page.goto(`/w/${orgSlug}/settings/ai`);
+    await page.waitForURL(/settings\?tab=ai/);
+    await expect(page.getByRole("heading", { name: "Your provider keys" })).toBeVisible();
+    await expect(page.getByText("None. Connect your own key above")).toBeVisible();
+    const card = page.getByTestId("provider-FIXTURE");
+    // A rejected key fails the connection test and is never activated.
+    await card.locator("input[type=password]").fill("fixture-bad");
+    await card.getByRole("button", { name: "Test connection" }).click();
+    await expect(card.getByText(/rejected the API key/)).toBeVisible();
+    await card.getByRole("button", { name: "Test & activate" }).click();
+    await expect(page.getByText(/Connection test failed/).first()).toBeVisible();
+    await expect(card.getByText("Not connected")).toBeVisible();
+    // A working key is tested, encrypted and activated; only a mask is shown afterwards.
+    await card.locator("input[type=password]").fill("fixture-ok");
+    await card.getByRole("button", { name: "Test & activate" }).click();
+    await expect(page.getByText("Provider connected")).toBeVisible();
+    await expect(card.getByText("••••e-ok")).toBeVisible();
+    await expect(card.getByText("Active")).toBeVisible();
+    expect(await page.locator("body").innerText()).not.toContain("fixture-ok");
+    // Every organisation capability now resolves to the organisation's own key.
+    await expect(page.getByRole("row", { name: /Evidence-based assessment/ }).getByText("Your key", { exact: true })).toBeVisible();
+  });
+
   test("9–10. student registers, completes profile, discovers and applies with preview & consent", async ({ page }) => {
     await register(page, "/register/student", student, "Stu");
     await login(page, student);
@@ -160,7 +190,9 @@ test.describe.serial("End-to-end journeys", () => {
     await page.check("#c-ai");
     await page.check("#c-tr");
     await page.click("text=Continue");
-    await page.check("#typed");
+    // This organisation runs on its own text-generation key with no platform speech grant,
+    // so spoken answers are unavailable and the room runs typed-only (the template allows typing).
+    await expect(page.getByText("Typed answers for this interview")).toBeVisible();
     await page.click("text=Start interview");
     await expect(page.getByText("Tell us about a project you are proud of.")).toBeVisible();
     await page.fill("#answer", "I built a dashboard that tracked course attendance and presented the findings to faculty, which led to new support sessions.");
@@ -196,6 +228,43 @@ test.describe.serial("End-to-end journeys", () => {
     const body = await page.locator("body").innerText();
     expect(body).not.toContain("PRIVATE NOTE");
     expect(body).not.toMatch(/Competent|Strong|evidence coverage|rubric/i);
+  });
+
+  test("18b. a super-admin grants platform AI to an organisation in the admin console (audited)", async ({ page }) => {
+    // The demo admin's TOTP secret lives encrypted in the database (printed once by the seed).
+    const db = new PrismaClient();
+    const admin = await db.user.findUniqueOrThrow({ where: { email: "admin@atlas.example" } });
+    await db.$disconnect();
+    await page.context().clearCookies();
+    await page.goto("/login");
+    await page.fill("#email", "admin@atlas.example");
+    await page.fill("#password", process.env.SEED_DEMO_PASSWORD || "Demo-password-2026!");
+    await page.click("button[type=submit]");
+    await page.waitForURL(/login\/mfa/);
+    await page.fill("#code", totp(decrypt(admin.mfaSecret!)));
+    await page.click("button[type=submit]");
+    await page.waitForURL(/\/admin/);
+    await page.goto(`/admin/ai?q=${encodeURIComponent(orgName)}`);
+    const row = page.getByRole("row", { name: new RegExp(orgName) });
+    await expect(row.getByText("denied (default)")).toBeVisible();
+    await row.getByRole("link", { name: "Manage" }).click();
+    await expect(page.getByText(/Organisation ID/)).toBeVisible();
+    await expect(page.getByText("not enabled")).toBeVisible();
+    // Organisation key health is visible, masked.
+    await expect(page.getByText("••••e-ok")).toBeVisible();
+    await page.getByTestId("grant-JOB_DRAFTING:FIXTURE").getByLabel("Allow platform Fixture (test only)").check();
+    await page.getByTestId("grant-JOB_DRAFTING:FIXTURE").getByLabel("Monthly request limit").fill("50");
+    await page.fill("#ai-reason", "E2E pilot access for vacancy drafting");
+    await page.getByRole("button", { name: /Save 1 change/ }).click();
+    await expect(page.getByText("AI access updated")).toBeVisible();
+    await expect(page.getByText("platform.ai.access_granted")).toBeVisible();
+    await expect(page.getByText(/E2E pilot access for vacancy drafting/)).toBeVisible();
+
+    // The organisation sees the grant read-only and cannot change it.
+    await login(page, owner);
+    await page.goto(`/w/${orgSlug}/settings?tab=ai`);
+    await expect(page.getByRole("table", { name: "Platform AI grants" }).getByText("Vacancy drafting")).toBeVisible();
+    await expect(page.getByRole("table", { name: "Platform AI grants" }).getByText("0 / 50 requests")).toBeVisible();
   });
 
   test("12. student completes a private practice interview", async ({ page }) => {

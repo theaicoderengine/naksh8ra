@@ -11,7 +11,7 @@ import { Spinner } from "../ui/spinner";
 import { useRecorder, speak } from "./use-recorder";
 
 type State = {
-  status: string; providerMode: string; providers: { ready: boolean; message: string | null }; organisation: string; jobTitle: string; mode: "STRUCTURED_AUDIO" | "REALTIME_CONVERSATIONAL"; language: string;
+  status: string; providerMode: string; providers: { ready: boolean; message: string | null }; spokenAnswers?: boolean; organisation: string; jobTitle: string; mode: "STRUCTURED_AUDIO" | "REALTIME_CONVERSATIONAL"; language: string;
   durationMinutes: number; questionCount: number; answerSeconds: number; prepSeconds: number; retakesAllowed: number; canRetakeLast: boolean; recordAudio: boolean; storeTranscript: boolean; allowTypedAnswers: boolean; captions: boolean; allowResume: boolean;
   instructions: string | null; expiresAt: string | null; progress: { answered: number; total: number }; currentQuestion: { position: number; prompt: string; answerSeconds: number } | null; conversation: { role: string; text: string }[]; ttsMode: "browser" | "server";
 };
@@ -68,6 +68,11 @@ export function InterviewRoom({ token, invitationId }: { token?: string; invitat
   const [prep, setPrep] = useState(0);
   const [interviewer, setInterviewer] = useState<string | null>(null);
   const [turns, setTurns] = useState<{ role: string; text: string }[]>([]);
+  // Speech-to-text not authorised for this organisation: run typed-only (the server allows it only when typed answers are permitted).
+  const typedOnly = s?.spokenAnswers === false && !!s?.allowTypedAnswers;
+  useEffect(() => {
+    if (typedOnly) setTyped(true);
+  }, [typedOnly]);
   const [speaking, setSpeaking] = useState(false);
   const [consent, setConsent] = useState({ recording: true, aiAssessment: false, transcript: false, accommodation: "" });
   const [alternative, setAlternative] = useState(false);
@@ -272,12 +277,13 @@ export function InterviewRoom({ token, invitationId }: { token?: string; invitat
       <>{header}
         <Card><CardBody className="space-y-5 p-6">
           {s.status === "INTERRUPTED" && <Alert tone="warning" title="Your interview was interrupted">Your previous answers are saved. Check your microphone and resume when ready.</Alert>}
-          <h2 className="font-semibold">Check your microphone</h2>
-          {rec.state === "idle" && <Button onClick={() => rec.request()}><Mic className="h-4 w-4" />Allow microphone</Button>}
+          {typedOnly && <Alert tone="info" title="Typed answers for this interview">Spoken answers aren&apos;t available for this interview, so you&apos;ll type your answers. Nothing about your answers is affected by this.</Alert>}
+          {!typedOnly && <h2 className="font-semibold">Check your microphone</h2>}
+          {!typedOnly && rec.state === "idle" && <Button onClick={() => rec.request()}><Mic className="h-4 w-4" />Allow microphone</Button>}
           {rec.state === "requesting" && <Spinner label="Waiting for microphone permission" />}
           {rec.state === "denied" && <Alert tone="danger" title="Microphone blocked">Allow microphone access in your browser settings and reload the page{s.allowTypedAnswers ? ", or continue with typed answers" : ""}.</Alert>}
           {rec.state === "unsupported" && <Alert tone="warning" title="Recording not supported in this browser">Use a recent version of Chrome, Edge, Firefox or Safari{s.allowTypedAnswers ? ", or continue with typed answers" : ""}.</Alert>}
-          {(rec.state === "ready" || rec.state === "recording") && (
+          {!typedOnly && (rec.state === "ready" || rec.state === "recording") && (
             <div className="space-y-3">
               <div className="flex items-center gap-4"><LevelMeter level={rec.level} /><p className="text-sm text-subtle" aria-live="polite">{rec.level > 0.08 ? "We can hear you." : "Say something to test your microphone."}</p></div>
               <div className="flex gap-2">
@@ -287,7 +293,7 @@ export function InterviewRoom({ token, invitationId }: { token?: string; invitat
               <Button variant="ghost" size="sm" onClick={() => say("This is how questions will sound.", null)}><Volume2 className="h-4 w-4" />Test speaker</Button>
             </div>
           )}
-          {s.allowTypedAnswers && <Checkbox id="typed" checked={typed} onChange={(e) => setTyped(e.target.checked)} label={<span className="inline-flex items-center gap-1"><Keyboard className="h-4 w-4" />I&apos;ll type my answers instead</span>} />}
+          {s.allowTypedAnswers && !typedOnly && <Checkbox id="typed" checked={typed} onChange={(e) => setTyped(e.target.checked)} label={<span className="inline-flex items-center gap-1"><Keyboard className="h-4 w-4" />I&apos;ll type my answers instead</span>} />}
           {err && <Alert tone="danger">{err}</Alert>}
           <Button size="lg" loading={busy} disabled={!(typed || rec.state === "ready")} onClick={start}>{s.status === "INTERRUPTED" ? "Resume interview" : "Start interview"}</Button>
         </CardBody></Card>

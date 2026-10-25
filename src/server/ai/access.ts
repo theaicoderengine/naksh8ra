@@ -252,6 +252,11 @@ async function noteCredentialError(scope: AiScope, r: Resolved, err: AppError) {
 
 // ───────────────────────── Public API ─────────────────────────
 
+/** The resolution without the decrypted key — the only shape that leaves this module. */
+function publicResolution(r: Resolved): AiResolution {
+  return { capability: r.capability, provider: r.provider, model: r.model, source: r.source, credentialId: r.credentialId, credentialVersion: r.credentialVersion, grantId: r.grantId, mode: r.mode };
+}
+
 async function run<T>(scope: AiScope, capability: TextCapability, fast: boolean, call: (r: Resolved) => Promise<{ value: T; model: string; usage: TokenUsage }>) {
   const startedAt = Date.now();
   let r: Resolved;
@@ -267,8 +272,7 @@ async function run<T>(scope: AiScope, capability: TextCapability, fast: boolean,
     const out = await call(r);
     await logRequest({ scope, capability, status: "SUCCEEDED", r, model: out.model, usage: out.usage, startedAt });
     if (r.source === "PLATFORM") await addPlatformTokens(scope, r, (out.usage.inputTokens ?? 0) + (out.usage.outputTokens ?? 0));
-    const { apiKey: _k, ...pub } = r;
-    return { value: out.value, model: out.model, resolution: pub };
+    return { value: out.value, model: out.model, resolution: publicResolution(r) };
   } catch (err) {
     const e = err instanceof AppError ? err : new AppError("PROVIDER_ERROR", "AI request failed");
     const usage = (e.details as { usage?: TokenUsage } | undefined)?.usage ?? null;
@@ -299,8 +303,7 @@ export async function aiText(scope: AiScope, capability: TextCapability, req: Te
 
 /** Fail fast before starting work that needs a capability (e.g. starting an interview). */
 export async function assertAiAvailable(scope: AiScope, capability: TextCapability): Promise<AiResolution> {
-  const { apiKey: _k, ...r } = await resolveText(scope, capability);
-  return r;
+  return publicResolution(await resolveText(scope, capability));
 }
 
 /** `resolution: null` = available without any provider (browser speech synthesis). */

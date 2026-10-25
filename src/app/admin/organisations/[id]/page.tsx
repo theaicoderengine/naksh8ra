@@ -40,6 +40,9 @@ export default async function AdminOrg({ params }: { params: Promise<{ id: strin
             <ul className="space-y-1 text-xs">{d.stats.ledger.map((l) => <li key={l.id} className="flex justify-between"><span>{fmtDateTime(l.createdAt)} · {titleCase(l.type)}{l.reason ? ` — ${l.reason}` : ""}</span><span className="tabular-nums">{l.amountAvailable > 0 ? "+" : ""}{l.amountAvailable} → {l.balanceAvailable}</span></li>)}</ul>
           </CardBody></Card>
         )}
+        {platformCan(role, "platform.ai.view") && d.org.type === "EMPLOYER" && (
+          <Card><CardHeader title="AI access" description="Platform-funded AI grants, limits, usage and key health" /><CardBody><Link className="text-sm font-medium text-primary hover:underline" href={`/admin/organisations/${d.org.id}/ai`}>Manage AI access →</Link></CardBody></Card>
+        )}
         <Card><CardHeader title="Support access" description="Metadata-only, owner-approved, 24h" /><CardBody className="space-y-3">
           <RequestSupportAccess id={d.org.id} />
           <ul className="space-y-1 text-sm">{d.supportGrants.map((g) => <li key={g.id}><StatusBadge status={g.status} /> {g.reason} <span className="text-xs text-subtle">{fmtDate(g.createdAt)}{g.expiresAt ? ` · expires ${fmtDateTime(g.expiresAt)}` : ""}</span></li>)}</ul>
