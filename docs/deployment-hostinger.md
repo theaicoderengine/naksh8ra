@@ -63,7 +63,7 @@ hPanel → Websites → **Add website → Node.js Web App** (Business or Cloud p
 
 | Setting | Value |
 |---|---|
-| Framework preset | **Next.js** (if you choose *Other*: entry file `.next/standalone/server.js`) |
+| Framework preset | **Next.js** |
 | Node.js version | **22.x** |
 | Repository / branch | `theaicoderengine/naksh8ra` / the release branch (currently `claude/atlas-hiring-build`) |
 | Root directory | `/` (repository root) |

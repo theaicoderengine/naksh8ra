@@ -32,6 +32,7 @@ ARG NEXT_PUBLIC_LEGAL_ENTITY=""
 ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME NEXT_PUBLIC_APP_TAGLINE=$NEXT_PUBLIC_APP_TAGLINE \
     NEXT_PUBLIC_BRAND_PRIMARY=$NEXT_PUBLIC_BRAND_PRIMARY NEXT_PUBLIC_LEGAL_ENTITY=$NEXT_PUBLIC_LEGAL_ENTITY
 # Build needs no secrets; a placeholder URL satisfies Prisma's config parsing.
+ENV NEXT_OUTPUT=standalone
 RUN --mount=type=secret,id=extra_ca,required=false \
     if [ -f /run/secrets/extra_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra_ca; fi; \
     DATABASE_URL="postgresql://build:build@localhost:5432/build" npm run build

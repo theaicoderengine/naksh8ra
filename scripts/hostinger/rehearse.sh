@@ -64,10 +64,17 @@ EMAIL="rehearsal-$(openssl rand -hex 4)@example.test"
 curl -sf -X POST "http://127.0.0.1:$PORT/api/v1/auth/register" -H 'content-type: application/json' \
   -H 'origin: https://atlas.rehearsal.test' -H 'x-forwarded-for: 203.0.113.10' \
   -d "{\"email\":\"$EMAIL\",\"password\":\"Correct-horse-battery-9\",\"firstName\":\"Re\",\"lastName\":\"Hearsal\",\"intent\":\"EMPLOYER\",\"acceptTerms\":true}" >/dev/null
-for _ in $(seq 1 30); do grep -q "$EMAIL" "${SMTP_LOG:?SMTP_LOG must point at the SMTP sink log}" && break; sleep 1; done
-grep -q "$EMAIL" "$SMTP_LOG" || { echo "✖ verification email was not delivered"; tail -20 "$WORK/server.log"; exit 1; }
+OWNER_URL="postgresql://atlas_owner:atlas_owner_dev@localhost:5432/$DB"
+for _ in $(seq 1 30); do
+  SENT=$(psql "$OWNER_URL" -tAc "SELECT status FROM \"EmailDelivery\" WHERE \"toAddress\" = '$EMAIL'")
+  [ "$SENT" = "SENT" ] && break; sleep 1
+done
+[ "$SENT" = "SENT" ] || { echo "✖ verification email not sent (status: ${SENT:-none})"; tail -20 "$WORK/server.log"; exit 1; }
+# The SMTP sink must have received it (not just the provider call returning).
+for _ in $(seq 1 10); do grep -q "$EMAIL" "${SMTP_LOG:?SMTP_LOG must point at the SMTP sink log}" && break; sleep 1; done
+grep -q "$EMAIL" "$SMTP_LOG" || { echo "✖ SMTP sink did not receive the email"; exit 1; }
 echo "✔ verification email delivered by the in-process runner"
-STATUS=$(psql "postgresql://atlas_owner:atlas_owner_dev@localhost:5432/$DB" -tAc "SELECT string_agg(DISTINCT status, ',') FROM \"JobRun\" WHERE queue = 'atlas-pg'")
+STATUS=$(psql "$OWNER_URL" -tAc "SELECT string_agg(DISTINCT status, ',') FROM \"JobRun\" WHERE queue = 'atlas-pg'")
 echo "job statuses: $STATUS"
 [ "$STATUS" = "COMPLETED" ] || { echo "✖ unexpected job statuses"; exit 1; }
 if grep -q '"level":50' "$WORK/server.log"; then echo "✖ server logged errors:"; grep '"level":50' "$WORK/server.log" | head -5; exit 1; fi

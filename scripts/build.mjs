@@ -26,9 +26,6 @@ step("Generate Prisma client", "npx", ["prisma", "generate"]);
 // Next.js must build with NODE_ENV=production even if the shell sets something else.
 step("Build Next.js", "npx", ["next", "build"], { NODE_ENV: "production" });
 if (hostinger) {
-  // Lets `.next/standalone/server.js` serve as an entry file if the panel asks for one
-  // (`npm start` is the recommended start command and does not need this).
-  step("Prepare standalone entry", process.execPath, ["-e", "require('fs').cpSync('.next/static', '.next/standalone/.next/static', { recursive: true })"]);
   step("Apply database migrations", "npx", ["prisma", "migrate", "deploy"]);
   step("System seed (roles, permissions, defaults)", "npx", ["tsx", "prisma/seed.ts"], { SEED_DEMO: "false" });
   step("Verify AI access invariants", "npx", ["tsx", "scripts/db/verify-ai-access.ts"]);

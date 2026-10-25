@@ -158,8 +158,8 @@ jobs:
       - name: Local S3 API and SMTP sink (throwaway)
         run: |
           python3 -m pip install --quiet "moto[server]==5.1.4" "aiosmtpd==1.4.6"
-          (python3 -m moto.server -p 5005 > /tmp/moto.log 2>&1 &)
-          (python3 -m aiosmtpd -n -l 127.0.0.1:2525 -c aiosmtpd.handlers.Debugging > /tmp/smtp.log 2>&1 &)
+          (python3 -u -m moto.server -p 5005 > /tmp/moto.log 2>&1 &)
+          (python3 -u -m aiosmtpd -n -l 127.0.0.1:2525 -c aiosmtpd.handlers.Debugging > /tmp/smtp.log 2>&1 &)
           for i in $(seq 1 30); do curl -s http://127.0.0.1:5005 >/dev/null && break; sleep 1; done
           node -e 'const {S3Client,CreateBucketCommand}=require("@aws-sdk/client-s3");new S3Client({region:"us-east-1",endpoint:"http://127.0.0.1:5005",forcePathStyle:true,credentials:{accessKeyId:"test",secretAccessKey:"test"}}).send(new CreateBucketCommand({Bucket:"atlas-files"})).then(()=>console.log("bucket ready"))'
       - name: Rehearse Hostinger deployment

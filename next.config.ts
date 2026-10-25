@@ -30,7 +30,9 @@ const securityHeaders = [
 ];
 
 const config: NextConfig = {
-  output: "standalone",
+  // Standalone server only for the container image (Dockerfile sets NEXT_OUTPUT); hosts that
+  // run `next start` (Hostinger) use the regular output.
+  output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
   poweredByHeader: false,
   reactStrictMode: true,
   serverExternalPackages: ["pdf-parse", "mammoth", "bullmq", "ioredis", "pino"],
