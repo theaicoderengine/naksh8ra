@@ -12,6 +12,8 @@ Object.assign(process.env, {
   TTS_PROVIDER: "browser",
   ALLOW_FIXTURE_PROVIDERS: "true",
   AI_RETRY_BASE_MS: "5",
+  // Unit/integration tests assert production rate limits; the multiplier is for E2E/load runs only.
+  RATE_LIMIT_MULTIPLIER: "1",
   EMAIL_PROVIDER: "console",
   STORAGE_PROVIDER: "local",
   STORAGE_LOCAL_DIR: "./tmp/test-storage",
