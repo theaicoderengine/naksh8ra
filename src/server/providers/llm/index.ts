@@ -161,9 +161,6 @@ function requireKey(apiKey: string | null | undefined): string {
   return apiKey.trim();
 }
 
-// Models that accept the server-side refusal fallback (`fallbacks: "default"`).
-const FALLBACK_MODELS = new Set(["claude-fable-5-1", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5"]);
-
 class AnthropicAdapter implements LlmAdapter {
   provider = "ANTHROPIC" as const;
   mode = "LIVE" as const;
@@ -172,13 +169,13 @@ class AnthropicAdapter implements LlmAdapter {
     this.client = new Anthropic({ apiKey: requireKey(apiKey), authToken: null, baseURL: OFFICIAL_BASE_URL.ANTHROPIC, timeout: opts.timeoutMs ?? env().AI_TIMEOUT_MS, maxRetries: 0, ...(opts.fetch ? { fetch: opts.fetch } : {}) });
   }
 
-  /** Uses the beta endpoint so eligible models get server-side refusal fallbacks (same model family, decided by the provider). */
+  /**
+   * Exactly the selected model: provider-side model fallbacks are deliberately NOT enabled,
+   * so an answer never comes from a model the organisation did not choose or the platform
+   * did not permit (a refusal is reported as a refusal).
+   */
   private create(params: Omit<Anthropic.Beta.MessageCreateParamsNonStreaming, "betas" | "fallbacks">) {
-    const fallback = FALLBACK_MODELS.has(params.model);
-    return this.client.beta.messages.create({
-      ...params,
-      ...(fallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
-    });
+    return this.client.beta.messages.create(params);
   }
 
   async json<T>(req: JsonRequest<T>, model: string) {

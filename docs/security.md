@@ -26,7 +26,10 @@ This document describes the controls that are implemented and tested. It is not 
 - Organisation keys are AES-256-GCM encrypted, isolated by RLS, decrypted per operation on the server, and only masked metadata (last 4, short fingerprint) is ever returned. Keys are tested before activation.
 - SDK clients are created per operation; empty keys are refused so SDKs cannot fall back to the platform's `*_API_KEY` environment variables.
 - Provider error text is scrubbed of key-like strings before logging/storing; logs also redact `apiKey`, `encryptedKey` and provider key headers.
-- No silent fallback across tenants, providers, models, or from an organisation key to a platform key. Details: [ai-providers.md](ai-providers.md).
+- No silent fallback across tenants, providers, models, or from an organisation key to a platform key; no provider-side model fallback. Details: [ai-providers.md](ai-providers.md).
+- SDK clients ignore provider SDK environment variables (official endpoints pinned; un-overridable variables refuse start-up) so platform configuration never rides along on organisation-key requests.
+- Candidates see neutral AI error messages (no provider, quota tier or configuration details); employers see details in their AI request log.
+- Key rotation without data loss: `ENCRYPTION_KEY_PREVIOUS` + `npm run secrets:reencrypt` ([operations.md](operations.md#encryption-key-backup-rotation-and-recovery)).
 
 ## Tenant isolation
 
@@ -63,7 +66,7 @@ Limitation: RLS context is set by the application. An attacker able to run arbit
 
 ## Dependency status
 
-`npm audit --omit=dev` at handover reports advisories in `next` (via bundled `postcss`), `prisma` (via `deepmerge-ts`), `zod` and `openai` (via `zod`) whose fixes require major-version upgrades (Next 16, Prisma 7, Zod 4, openai 7). The zod memory-exhaustion advisory is mitigated by the 1 MB JSON cap but should be fixed by upgrading. Tracked in [known-limitations.md](known-limitations.md).
+As of 2026-10-25, `npm audit` (all dependencies, including dev/build tooling) reports **0 vulnerabilities**: zod 4.6.6 (request-validation memory exhaustion), openai 6.49.0, vitest 5.0.3 (critical tooling advisories), plus `overrides` pinning patched transitive versions — `postcss` inside Next, `deepmerge-ts` 8 inside Prisma's config loader, `postcss-selector-parser` 7 under Tailwind 3 — each verified with the tool that loads it (production build, Prisma CLI, CSS output, full test suite). CI fails on any high or critical advisory. Remaining major upgrades (Next 16, Prisma 7, Tailwind 4) are maintenance, not open advisories. The 1 MB JSON body cap remains as defence in depth.
 
 ## Reporting
 

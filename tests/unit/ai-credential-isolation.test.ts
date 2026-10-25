@@ -67,3 +67,21 @@ describe("un-overridable SDK environment variables fail closed", () => {
     });
   }
 });
+
+describe("no automatic model switching", () => {
+  it("Anthropic requests use exactly the selected model, with no provider-side fallback", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const urls: string[] = [];
+    const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      urls.push(String(input instanceof Request ? input.url : input));
+      bodies.push(JSON.parse(String(init?.body ?? "{}")));
+      return new Response(JSON.stringify({ type: "error", error: { type: "overloaded_error", message: "x" } }), { status: 529, headers: { "content-type": "application/json" } });
+    };
+    const { z } = await import("zod/v4");
+    await createLlmAdapter("ANTHROPIC", "ORG-OWN-KEY-1234567890", { fetch: fetch as never }).json({ purpose: "t", system: "s", user: "u", schema: z.object({ a: z.string() }) }, "claude-opus-5-5").catch(() => undefined);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].model).toBe("claude-opus-5-5");
+    expect(bodies[0]).not.toHaveProperty("fallbacks");
+    expect(urls[0]).not.toMatch(/beta=.*fallback/);
+  });
+});

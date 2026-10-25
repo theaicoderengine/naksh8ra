@@ -77,7 +77,12 @@ Without authorised server TTS, the browser's built-in voice is used (not a platf
 ## Usage, limits and cost
 
 - `AiRequestLog`: one row per operation attempt — organisation/user/session, capability, provider, model, source (organisation/platform), credential id + version, status (`SUCCEEDED` / `FAILED` / `DENIED`), error code, input/output tokens where reported, latency, **estimated** cost (only when a price is configured in `PROVIDER_PRICES_JSON`/defaults; otherwise blank — never guessed). No prompts or outputs are stored.
-- Platform grants can set monthly request and token limits. A request is reserved atomically in `AiUsageCounter` (re-checking the grant under a row lock) before the provider call, so concurrent requests and retries cannot exceed the request limit; token limits stop further calls once reached (the call that crosses the limit completes). Each operation reserves once; SDK-level retries happen inside it. Failed attempts count toward request limits.
+- Platform grants can set monthly request and token limits, enforced with **per-attempt reservations**:
+  - *Reserve* (one transaction, before each provider call): re-check that the grant is enabled and the model still permitted, then a conditional update of `AiUsageCounter` — `requests + 1` and `tokensReserved + estimate`, only if `requests < limit` and `tokens + tokensReserved + estimate ≤ limit` — and an `AiUsageReservation` row. The estimate is the worst case: prompt size (≈3 bytes/token, conservative) plus the request's output-token cap, which is also passed to the provider. Concurrent attempts therefore cannot push settled + in-flight usage past the limit.
+  - *Settle* (exactly once): success → actual reported tokens; failure with reported usage → that usage; timeout or 5xx → the input estimate (the provider may have processed the prompt); rejected before processing (auth, quota, bad request, unknown model) → 0. Each attempt counts as a request.
+  - *Sweep* (`ai.reservations.sweep`, every 10 minutes): reservations orphaned by a crash are charged their full estimate after expiry (`2 × AI_TIMEOUT_MS + 60 s`); a late settle corrects to actual usage.
+  - *Retries* happen in the resolver, not the SDKs: transient errors only (5xx, timeouts; never 429/auth/validation), up to `AI_MAX_RETRIES` (default 2) with exponential backoff from `AI_RETRY_BASE_MS`. Each retry re-resolves access (so a revocation or rotation applies between attempts) and takes its own reservation.
+  - A single request larger than the remaining token budget is refused before contacting the provider.
 - Personal-account limits are shared by all personal accounts.
 - Interview credits are unchanged: reserved at invitation, consumed at completion with ≥1 answer, released on cancellation/expiry/platform failure. A failed or denied AI assessment leaves the session `FAILED` with the reason (never `ASSESSED`), retryable by HR, and never consumes an extra credit.
 
@@ -89,9 +94,16 @@ Organisation (`ai.manage`, held by OWNER and HR_ADMIN):
 Platform (`platform.ai.view`: SUPER_ADMIN, BILLING_ADMIN; `platform.ai.manage`: SUPER_ADMIN only; MFA required; enforced in the route layer and again in the service):
 `GET /api/v1/platform/ai`, `GET /platform/organisations/{id}/ai`, `PUT /platform/organisations/{id}/ai/grants`, `GET /platform/ai/personal`, `PUT /platform/ai/personal/grants`. Every grant change requires a reason and writes an audit event with before/after values.
 
+## Credential isolation from SDK environment variables
+
+Provider SDKs read more than their API-key variable: `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_CUSTOM_HEADERS`, federation/identity variables, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID`, `OPENAI_BASE_URL`, `GOOGLE_GEMINI_BASE_URL`, Vertex settings. Any of these would otherwise ride along on an organisation's own-key request. Every client is therefore created with the official endpoint pinned and env-derived credentials explicitly nulled; variables that cannot be neutralised in code (`ANTHROPIC_CUSTOM_HEADERS`, `ANTHROPIC_IDENTITY_TOKEN[_FILE]`, `ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ENVIRONMENT_ID/KEY`, `ANTHROPIC_CONFIG_DIR`, `AZURE_OPENAI_API_KEY`, `GOOGLE_GENAI_USE_ENTERPRISE`, `GOOGLE_VERTEX_BASE_URL`) make the app refuse to start. Tested by capturing real outgoing requests (`tests/unit/ai-credential-isolation.test.ts`).
+
+No provider-side model fallback is enabled (e.g. Anthropic's server-side refusal fallback): answers always come from the selected, permitted model.
+
 ## Operations
 
 1. Configure deployment keys (optional) and `ENCRYPTION_KEY` (required to store organisation keys).
 2. Run `npm run db:seed` after deploying (adds the `ai.manage` permission to system roles).
 3. Grant platform AI per organisation in Admin → AI access, with limits; grant personal-account AI for student practice if offered.
-4. Rotating `ENCRYPTION_KEY` makes stored organisation keys unreadable — organisations would need to reconnect. Plan key rotation as a re-encryption migration.
+4. Verify a rollout with `npm run db:verify-ai-access -- --expect-no-grants` (read-only; see [operations.md](operations.md#ai-access-rollout-verification)).
+5. Rotating `ENCRYPTION_KEY` is supported without losing organisation keys — follow [operations.md → Encryption key](operations.md#encryption-key-backup-rotation-and-recovery). Never change the key without `ENCRYPTION_KEY_PREVIOUS` and the re-encryption job: stored keys and MFA secrets would become unreadable (they then fail closed with "reconnect your key"; nothing falls back).

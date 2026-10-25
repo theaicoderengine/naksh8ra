@@ -22,7 +22,12 @@ Tick every item with evidence (link, screenshot, ticket) before onboarding real 
 - [ ] Organisation BYOK verified on staging with real Gemini, OpenAI and Anthropic keys: connect, test, rotate, remove; bad key rejected
 - [ ] Gemini free-tier behaviour checked with a free-tier key: quota error message shown, no model switch; data-use terms communicated to customers
 - [ ] Supported model list (`AI_MODEL_CATALOG_JSON`) reviewed against providers' current models and free-tier status
-- [ ] `ENCRYPTION_KEY` rotation plan (re-encryption) documented before any organisation stores keys
+- [ ] Staging provider test matrix executed with evidence ([staging-provider-test-matrix.md](staging-provider-test-matrix.md)) — currently **not run**
+- [ ] `npm run db:verify-ai-access -- --expect-no-grants` passes on staging and production after migrate + seed
+- [ ] Encryption key rotation rehearsed on staging (`ENCRYPTION_KEY_PREVIOUS` + `npm run secrets:reencrypt -- --apply`), old key escrowed
+- [ ] Rollback runbook reviewed: rolling back past the AI access release requires `LLM_PROVIDER=none` / removing platform AI keys
+- [ ] No provider SDK side-channel variables set in any environment (app refuses to start if the un-overridable ones are present)
+- [ ] Worker scheduler running `ai.reservations.sweep`; alert on sweep charges
 - [ ] LLM: real interviews end-to-end; assessments reviewed by HR against rubrics; latency acceptable
 - [ ] STT: accuracy checked on varied accents / audio quality
 - [ ] TTS: voice acceptable or browser speech chosen deliberately
@@ -44,8 +49,8 @@ Tick every item with evidence (link, screenshot, ticket) before onboarding real 
 - [ ] Candidate accommodation and human-contact process staffed
 
 ## Security
-- [ ] Independent penetration test; findings fixed
-- [ ] Dependency majors upgraded or risk accepted (see known-limitations)
+- [ ] Independent penetration test (incl. BYOK/tenant isolation and platform-key access paths); findings fixed
+- [ ] `npm audit --audit-level=high` clean in CI (0 at 2026-10-25); `overrides` re-validated after dependency upgrades
 - [ ] `security.txt` / vulnerability disclosure contact published
 - [ ] Platform admin and support staff access reviewed; MFA enforced
 

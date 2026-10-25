@@ -15,13 +15,16 @@ This is a frank list of what is incomplete, unverified or simplified as of hando
 
 ## AI provider access (BYOK / platform grants)
 
-- No organisation or platform key has been exercised against live Gemini, OpenAI or Anthropic services. Gemini behaviour (structured output, 429/5xx/auth handling, model checks) is tested with Google's official SDK over a stubbed HTTP transport; OpenAI and Anthropic connection tests use their SDKs' `models.retrieve` and are untested live. **Launch blocker:** verify each provider on staging.
-- Free-tier eligibility labels come from Google's published model list at the time of writing and are configurable, not fetched live from the provider.
-- Platform token limits are checked before each call; the call that crosses the limit completes, so usage can exceed a token limit by one operation.
+- **Launch blocker — live providers unverified.** No organisation or platform key has been exercised against live Gemini, OpenAI or Anthropic services. Gemini behaviour is tested with Google's official SDK over a stubbed HTTP transport; Anthropic/OpenAI request shapes are verified by capturing real SDK requests against a stub. Run [staging-provider-test-matrix.md](staging-provider-test-matrix.md) (currently: not run).
+- **Rollback hazard.** Rolling the app back to a release before the AI access feature re-opens platform AI to every organisation (older code has no grant checks). The schema itself is rollback-compatible. Procedure in [operations.md](operations.md#rollback) (set `LLM_PROVIDER=none` / remove platform AI keys for the old release).
+- Free-tier labels are advisory, from Google's published model list at the time of writing, and configurable — not fetched live.
+- Token reservations use a conservative size estimate (≈3 bytes/token + output cap). Near a token limit, a request may be refused even though its actual usage would have fitted; limits never overshoot through concurrency. Orphaned reservations are charged their full estimate until a late settle corrects them.
+- Each attempt (including retries and failed attempts) counts as one request against request limits.
 - Personal-account (student) platform limits are shared across all personal accounts, not per student (practice credits still cap each student).
-- Organisation keys cover text generation only; organisations cannot bring their own speech-to-text or text-to-speech keys.
+- Organisation keys cover text generation only; no BYOK for speech-to-text or text-to-speech.
 - Cost estimates exist only for models with configured prices (Anthropic defaults); Gemini/OpenAI show "n/a" until `PROVIDER_PRICES_JSON` is set.
-- Rotating `ENCRYPTION_KEY` requires a re-encryption step for stored organisation keys (not automated).
+- A short (48-bit) SHA-256 fingerprint of each organisation key is shown to the organisation and platform admins for identification; it does not enable key recovery for high-entropy keys.
+- Platform deployments cannot route provider traffic through a proxy/gateway: SDK base-URL variables are deliberately ignored. Adding gateway support needs an explicit, platform-only configuration.
 
 ## Product scope simplifications
 
@@ -42,9 +45,10 @@ This is a frank list of what is incomplete, unverified or simplified as of hando
 
 ## Security / dependencies
 
-- `npm audit --omit=dev` reports 7 advisories (6 high, 1 moderate) whose fixes require major upgrades: `next` 15 → 16 (bundled `postcss`), `prisma` 6 → 7 (`deepmerge-ts`), `zod` 3 → 4 (memory exhaustion on oversized collections — mitigated by the 1 MB JSON cap), `openai` SDK 5 → 7. Plan the upgrades and re-run the full test suite.
+- `npm audit` reports 0 vulnerabilities (2026-10-25) using `overrides` for patched transitive packages (`postcss` in Next, `deepmerge-ts` in Prisma's config loader, `postcss-selector-parser` under Tailwind 3). Overrides must be re-checked on every Next/Prisma/Tailwind upgrade; the majors (Next 16, Prisma 7, Tailwind 4) are pending maintenance.
+- `postcss` 8.5.31 was locked at the original build while under two weeks old (patch release); acceptable, noted for supply-chain review.
 - RLS context is set by the app role itself (see [security.md](security.md#tenant-isolation)); RLS guards against application bugs, not a compromised app process.
-- No independent penetration test has been performed. **Recommended before launch.**
+- No independent penetration test has been performed. **Launch blocker** (recommended by policy).
 - CSP allows `'unsafe-inline'` scripts (required by Next.js without nonces). Moving to nonce-based CSP is a hardening follow-up.
 
 ## Testing gaps
@@ -52,5 +56,6 @@ This is a frank list of what is incomplete, unverified or simplified as of hando
 - E2E covers the structured interview mode in the browser; conversational mode is covered by an integration test (server pipeline) but not a browser test.
 - Load tests ran on a single local machine with fixture providers; they measure application + database overhead only, not provider latency or multi-node behaviour.
 - The Docker images were built and smoke-tested in this environment using the full `node:22-bookworm` base (the default `-slim` base needs Debian mirrors, which this sandbox's network policy blocks). `docker compose up` as a whole was not run here.
-- CI workflow (`.github/workflows/ci.yml`) has not run on GitHub yet; its steps were executed locally piecemeal.
+- CI workflow (`.github/workflows/ci.yml`) has not run on GitHub yet (no pull request could be opened: the repository has no base branch); its steps were executed locally piecemeal.
+- The upgrade path was rehearsed on a local copy of the previous release's database, not on a real staging database with production-like data volume; migration lock time on large tables is unmeasured (the AI migrations only add tables, two columns with defaults, and policies).
 - Accessibility: built on semantic HTML, labelled controls, focus states and keyboard paths; no formal WCAG audit or screen-reader testing was done.

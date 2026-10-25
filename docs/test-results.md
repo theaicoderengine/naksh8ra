@@ -1,5 +1,30 @@
 # Test results
 
+## Update 2026-10-25 (hardening pass) — security review, limits, dependencies, upgrade path
+
+All results below were produced in this environment on the final tree. Fixture providers only; **no live provider credentials were used** — see [staging-provider-test-matrix.md](staging-provider-test-matrix.md) (not run).
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck | `tsc --noEmit` | ✅ 0 errors |
+| Lint | `next lint` | ✅ 0 errors, 1 pre-existing warning (`<img>` for MFA QR data URL) |
+| Unit + integration | `vitest run` (vitest 5.0.3) | ✅ 14 files, **167 / 167** (full suite also run 3× consecutively green before the last two test additions) |
+| Browser E2E | `playwright test` | ✅ **9 / 9** |
+| Migration drift | `prisma migrate diff … --exit-code` | ✅ No difference detected (6 migrations) |
+| Production build | `npm run build` | ✅ |
+| Dependency audit | `npm audit` (all deps) | ✅ **0 vulnerabilities** (was 13: 2 critical, 6 high, 5 moderate) |
+| Docker images | `docker build --target web` / `tooling` (npm 10 `npm ci` inside) | ✅ both built; web container: `/api/health` 200, `/api/ready` 200, pages 200 |
+| Load test | `npm run perf` (300 req/endpoint ×7, 20 concurrent interviews) | ✅ 0 errors; interviews 20/20; end-to-end p50 1919 ms / p95 1978 ms (fixture providers) |
+| Limit load test (HTTP) | 40 concurrent `POST /jobs/draft-description`, request-limit headroom 10 | ✅ exactly 10 × 200, 30 × 429 `AI_LIMIT_REACHED`; 0 reservations left open |
+| Reservation stress | 60 rounds × 8 concurrent reservations | ✅ 0 anomalies after fix (before: 6 unique-violation errors in 40 rounds) |
+| Upgrade rehearsal | previous release `75eeaf8` DB (own deps, migrations, demo seed) → this branch's migrations + production seed | ✅ data counts unchanged; role permissions 116 → 118 (`ai.manage` on OWNER, HR_ADMIN); `verify-ai-access --expect-no-grants` 19/19; existing org/student denied for all AI with platform keys configured; seed idempotent |
+| Rollback rehearsal | previous release against upgraded schema | ✅ schema-compatible (no pending migrations; old seed/client work); ⚠️ old code ignores grants → procedure documented |
+| Key rotation | integration test, both directions | ✅ no secret lost; dry run writes nothing; idempotent |
+
+New/changed tests: `tests/unit/ai-credential-isolation.test.ts` (outgoing request capture for all three SDKs with platform env set; fail-closed variables; no Anthropic model fallback), reservation/settlement/sweep/retry/revocation-between-attempts tests, first-of-month race regression, undecryptable key, neutral candidate errors, start-up refusal, request-log RLS, audited admin views, key rotation.
+
+---
+
 ## Update 2026-10-25 — tenant-aware AI provider access and BYOK
 
 Re-run in full after adding platform AI grants, organisation-owned keys and Gemini (same environment; fixture providers only; **no live provider credentials were used**).
